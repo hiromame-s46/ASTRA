@@ -2,6 +2,7 @@ const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
 const MEMBER_URL = '../data/member.json';
 const GRAD_MEMBER_URL = '../data/member_grad.json';
 const BLOG_URL = '../data/blogs.json';
+const ACTIVE_MEMBER_EXCLUDES = new Set(['小池 美波']);
 const AUTO_ASSIGN_THRESHOLD = 0.5;
 const AUTO_ASSIGN_MARGIN = 0.035;
 const CANDIDATE_TOP_K = 5;
@@ -196,16 +197,17 @@ async function loadMembers(){
   ]);
   const activeData = await activeRes.json();
   const gradData = gradRes && gradRes.ok ? await gradRes.json() : {};
-  members = normalizeMembers(activeData);
+  members = normalizeMembers(activeData, ACTIVE_MEMBER_EXCLUDES);
   graduatedMembers = normalizeMembers(gradData);
   selectableMembers = [...members, ...graduatedMembers];
   selectedBlogMembers = new Set(selectableMembers.map(m => m.name));
   renderBlogMemberFilter();
 }
 
-function normalizeMembers(data){
+function normalizeMembers(data, excludes=new Set()){
   return Object.values(data || {})
     .filter(m => m && m.name)
+    .filter(m => !excludes.has(m.name))
     .filter((member, index, list) => list.findIndex(row => row.name === member.name) === index);
 }
 
