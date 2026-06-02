@@ -23,7 +23,7 @@ ASTRA is a standalone face-recognition tool migrated from the SakuLabo AI featur
 ├── train.html      # training screen
 ├── sort.html       # sorting screen
 ├── api.php         # descriptor, stats, auth check, image proxy API
-├── data/           # descriptors, stats, members, blogs
+├── data/           # descriptors and stats collected by ASTRA
 ├── assets/         # ASTRA logo
 └── icon/           # favicon and PWA icons
 ```
@@ -31,3 +31,5 @@ ASTRA is a standalone face-recognition tool migrated from the SakuLabo AI featur
 ## Notes
 
 The recognition model itself is unchanged and still uses `@vladmandic/face-api` models loaded from jsDelivr. Existing descriptor data can be used as-is through `data/descriptors.json`.
+
+Member and blog master data are not stored in this repository. ASTRA reads them from the shared sibling `../data` directory, matching the existing SakuLabo data layout.
