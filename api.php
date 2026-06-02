@@ -8,12 +8,14 @@ $dataDir = $baseDir . '/data';
 $uploadDir = $baseDir . '/uploads/train';
 $descriptorFile = $dataDir . '/descriptors.json';
 $statsFile = $dataDir . '/stats.json';
+$sortAccessFile = $dataDir . '/sort_access.json';
 const ADMIN_USER_ID = 1;
 
 if (!is_dir($dataDir)) mkdir($dataDir, 0775, true);
 if (!is_dir($uploadDir)) mkdir($uploadDir, 0775, true);
 if (!file_exists($descriptorFile)) file_put_contents($descriptorFile, "{}\n");
 if (!file_exists($statsFile)) file_put_contents($statsFile, "{}\n");
+if (!file_exists($sortAccessFile)) write_json_locked($sortAccessFile, default_sort_access());
 cleanup_uploads($uploadDir);
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
@@ -23,6 +25,10 @@ try {
         'auth_me' => send_json(['ok' => true, 'data' => current_auth_user()]),
         'auth_login' => auth_login(),
         'auth_logout' => auth_logout(),
+        'sort_access_me' => sort_access_me($sortAccessFile),
+        'sort_access_list' => sort_access_list($sortAccessFile),
+        'sort_access_save' => sort_access_save($sortAccessFile),
+        'sort_access_delete' => sort_access_delete($sortAccessFile),
         'descriptors' => send_json(read_json($descriptorFile)),
         'stats' => send_json(build_stats($descriptorFile)),
         'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir),
@@ -104,6 +110,54 @@ function build_stats_from_data(array $data): array {
     }
     ksort($stats, SORT_NATURAL);
     return $stats;
+}
+
+function default_sort_access(): array {
+    return [
+        'users' => [
+            '1' => [
+                'user_id' => 1,
+                'username' => 'hiromame',
+                'display_name' => 'hiromame',
+                'status' => 'active',
+                'created_at' => gmdate('c'),
+                'updated_at' => gmdate('c'),
+            ],
+        ],
+    ];
+}
+
+function normalize_sort_access(array $data): array {
+    $users = $data['users'] ?? [];
+    if (!is_array($users)) $users = [];
+    $next = [];
+    foreach ($users as $key => $row) {
+        if (!is_array($row)) continue;
+        $id = (int)($row['user_id'] ?? $key);
+        if ($id <= 0) continue;
+        $next[(string)$id] = [
+            'user_id' => $id,
+            'username' => (string)($row['username'] ?? ''),
+            'display_name' => (string)($row['display_name'] ?? ''),
+            'status' => ((string)($row['status'] ?? 'active') === 'paused') ? 'paused' : 'active',
+            'created_at' => (string)($row['created_at'] ?? ''),
+            'updated_at' => (string)($row['updated_at'] ?? ''),
+        ];
+    }
+    ksort($next, SORT_NATURAL);
+    return ['users' => $next];
+}
+
+function sort_access_rows(string $sortAccessFile): array {
+    return array_values(normalize_sort_access(read_json($sortAccessFile))['users']);
+}
+
+function is_sort_allowed(array $user, string $sortAccessFile): bool {
+    $id = (string)(int)($user['id'] ?? 0);
+    if ($id === '0') return false;
+    $access = normalize_sort_access(read_json($sortAccessFile));
+    $row = $access['users'][$id] ?? null;
+    return is_array($row) && ($row['status'] ?? '') === 'active';
 }
 
 function save_descriptor(string $descriptorFile, string $statsFile, string $uploadDir): never {
@@ -260,11 +314,87 @@ function current_auth_user(): ?array {
     return $st->fetch() ?: null;
 }
 
+function require_admin_user(): array {
+    $user = current_auth_user();
+    if (!$user) send_json(['ok' => false, 'error' => 'login required'], 401);
+    if ((int)$user['id'] !== ADMIN_USER_ID) send_json(['ok' => false, 'error' => 'admin only'], 403);
+    return $user;
+}
+
+function sort_access_me(string $sortAccessFile): never {
+    $user = current_auth_user();
+    if (!$user) send_json(['ok' => true, 'data' => ['user' => null, 'allowed' => false]]);
+    send_json(['ok' => true, 'data' => [
+        'user' => $user,
+        'allowed' => is_sort_allowed($user, $sortAccessFile),
+    ]]);
+}
+
+function sort_access_list(string $sortAccessFile): never {
+    require_admin_user();
+    send_json(['ok' => true, 'data' => sort_access_rows($sortAccessFile)]);
+}
+
+function fetch_auth_user_by_id(int $userId): ?array {
+    $st = auth_db()->prepare('SELECT id, username, display_name FROM sakulabo_users WHERE id = ? LIMIT 1');
+    $st->execute([$userId]);
+    $user = $st->fetch();
+    return $user ?: null;
+}
+
+function sort_access_save(string $sortAccessFile): never {
+    require_admin_user();
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
+    $userId = (int)($payload['user_id'] ?? 0);
+    $status = ((string)($payload['status'] ?? 'active') === 'paused') ? 'paused' : 'active';
+    if ($userId <= 0) send_json(['ok' => false, 'error' => 'Buddies profile IDを入力してください。'], 400);
+
+    $profile = fetch_auth_user_by_id($userId);
+    if (!$profile) send_json(['ok' => false, 'error' => '指定したBuddies profile IDのユーザーが見つかりません。'], 404);
+
+    $now = gmdate('c');
+    mutate_json_locked($sortAccessFile, static function (array $data) use ($profile, $status, $now): array {
+        $access = normalize_sort_access($data);
+        $id = (string)(int)$profile['id'];
+        $created = $access['users'][$id]['created_at'] ?? $now;
+        $access['users'][$id] = [
+            'user_id' => (int)$profile['id'],
+            'username' => (string)$profile['username'],
+            'display_name' => (string)$profile['display_name'],
+            'status' => $status,
+            'created_at' => $created,
+            'updated_at' => $now,
+        ];
+        return $access;
+    });
+    send_json(['ok' => true, 'data' => sort_access_rows($sortAccessFile)]);
+}
+
+function sort_access_delete(string $sortAccessFile): never {
+    require_admin_user();
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
+    $userId = (int)($payload['user_id'] ?? 0);
+    if ($userId <= 0) send_json(['ok' => false, 'error' => 'Buddies profile IDを指定してください。'], 400);
+
+    mutate_json_locked($sortAccessFile, static function (array $data) use ($userId): array {
+        $access = normalize_sort_access($data);
+        unset($access['users'][(string)$userId]);
+        return $access;
+    });
+    send_json(['ok' => true, 'data' => sort_access_rows($sortAccessFile)]);
+}
+
 function enforce_save_auth(array $payload): void {
     $user = current_auth_user();
     if (!$user) send_json(['error' => 'login required'], 401);
     $source = trim((string)($payload['source'] ?? ''));
-    if ($source === 'sort') return;
+    global $sortAccessFile;
+    if ($source === 'sort') {
+        if (is_sort_allowed($user, $sortAccessFile)) return;
+        send_json(['error' => 'sort access denied'], 403);
+    }
     if ((int)$user['id'] === ADMIN_USER_ID) return;
     send_json(['error' => 'admin only'], 403);
 }

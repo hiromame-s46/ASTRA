@@ -97,11 +97,16 @@ async function init(){
 async function ensurePageAccess(){
   try{
     setStatus('ログイン状態を確認中...');
-    const res = await fetch('./api.php?action=auth_me', {credentials:'include', cache:'no-store'});
+    const res = await fetch('./api.php?action=sort_access_me', {credentials:'include', cache:'no-store'});
     const json = await res.json();
-    const user = json && json.ok ? json.data : null;
+    const data = json && json.ok ? json.data : null;
+    const user = data?.user || null;
     if(!user){
       showAccessMessage('ログインが必要です。', 'Buddies profileアカウントでログインしてください。');
+      return null;
+    }
+    if(!data.allowed){
+      showAccessMessage('仕分け権限がありません。', '管理者にSortの利用許可を依頼してください。');
       return null;
     }
     return user;

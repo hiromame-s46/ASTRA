@@ -46,6 +46,11 @@ const blogSelect = document.getElementById('blog-select');
 const blogMemberFilter = document.getElementById('blog-member-filter');
 const blogMemberSummary = document.getElementById('blog-member-summary');
 const memberModal = document.getElementById('member-modal');
+const sortAccessModal = document.getElementById('sort-access-modal');
+const sortAccessList = document.getElementById('sort-access-list');
+const sortAccessStatus = document.getElementById('sort-access-status');
+const sortAccessUserId = document.getElementById('sort-access-user-id');
+const sortAccessAddBtn = document.getElementById('sort-access-add-btn');
 const undoBtn = document.getElementById('undo-btn');
 const undoBottomBtn = document.getElementById('undo-bottom-btn');
 const saveBottomBtn = document.getElementById('save-bottom-btn');
@@ -324,6 +329,102 @@ function openMemberModal(){
 function closeMemberModal(event){
   if(event && event.target !== memberModal) return;
   memberModal?.classList.add('hidden');
+}
+
+async function openSortAccessModal(){
+  sortAccessModal?.classList.remove('hidden');
+  await loadSortAccessUsers();
+}
+
+function closeSortAccessModal(event){
+  if(event && event.target !== sortAccessModal) return;
+  sortAccessModal?.classList.add('hidden');
+}
+
+async function loadSortAccessUsers(){
+  if(!sortAccessList || !sortAccessStatus) return;
+  sortAccessStatus.textContent = '許可ユーザーを読み込み中...';
+  sortAccessList.innerHTML = '';
+  try{
+    const res = await fetch('./api.php?action=sort_access_list', {credentials:'include', cache:'no-store'});
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '許可ユーザーを読み込めませんでした。');
+    renderSortAccessUsers(json.data || []);
+    sortAccessStatus.textContent = `${(json.data || []).length}人を管理中`;
+  }catch(e){
+    sortAccessStatus.textContent = e.message || '許可ユーザーを読み込めませんでした。';
+    sortAccessList.innerHTML = '';
+  }
+}
+
+function renderSortAccessUsers(rows){
+  if(!sortAccessList) return;
+  if(!rows.length){
+    sortAccessList.innerHTML = '<div class="empty-result">許可ユーザーがありません。</div>';
+    return;
+  }
+  sortAccessList.innerHTML = rows.map(row => {
+    const active = row.status !== 'paused';
+    const label = active ? '有効' : '停止中';
+    const nextStatus = active ? 'paused' : 'active';
+    const nextLabel = active ? '一時停止' : '再開';
+    return `<div class="access-user-row">
+      <div>
+        <div class="access-user-name">${escapeHtml(row.display_name || row.username || `ID ${row.user_id}`)}<span class="access-status ${active ? 'active' : 'paused'}">${label}</span></div>
+        <div class="access-user-meta">ID ${escapeHtml(row.user_id)} / ${escapeHtml(row.username || '-')}</div>
+      </div>
+      <div class="access-user-actions">
+        <button class="button soft" type="button" onclick="saveSortAccessUser('${nextStatus}', ${Number(row.user_id)})">${nextLabel}</button>
+        <button class="button" type="button" onclick="deleteSortAccessUser(${Number(row.user_id)})">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function saveSortAccessUser(status='active', userId=null){
+  const id = Number(userId || sortAccessUserId?.value || 0);
+  if(!id){
+    if(sortAccessStatus) sortAccessStatus.textContent = 'Buddies profile IDを入力してください。';
+    return;
+  }
+  if(sortAccessAddBtn) sortAccessAddBtn.disabled = true;
+  if(sortAccessStatus) sortAccessStatus.textContent = '保存中...';
+  try{
+    const res = await fetch('./api.php?action=sort_access_save', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:id, status})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '保存できませんでした。');
+    if(sortAccessUserId && !userId) sortAccessUserId.value = '';
+    renderSortAccessUsers(json.data || []);
+    if(sortAccessStatus) sortAccessStatus.textContent = `${(json.data || []).length}人を管理中`;
+  }catch(e){
+    if(sortAccessStatus) sortAccessStatus.textContent = e.message || '保存できませんでした。';
+  }finally{
+    if(sortAccessAddBtn) sortAccessAddBtn.disabled = false;
+  }
+}
+
+async function deleteSortAccessUser(userId){
+  if(!userId) return;
+  if(sortAccessStatus) sortAccessStatus.textContent = '削除中...';
+  try{
+    const res = await fetch('./api.php?action=sort_access_delete', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:userId})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '削除できませんでした。');
+    renderSortAccessUsers(json.data || []);
+    if(sortAccessStatus) sortAccessStatus.textContent = `${(json.data || []).length}人を管理中`;
+  }catch(e){
+    if(sortAccessStatus) sortAccessStatus.textContent = e.message || '削除できませんでした。';
+  }
 }
 
 async function loadNextBlogImage(options={}){
