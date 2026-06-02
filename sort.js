@@ -1,5 +1,6 @@
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
 const MEMBER_URL = '../data/member.json';
+const GRAD_MEMBER_URL = '../data/member_grad.json';
 const BLOG_URL = '../data/blogs.json';
 const RECENT_BLOG_KEEP = 80;
 const OLDER_BLOG_SAMPLE = 260;
@@ -15,6 +16,8 @@ const LOW_COUNT_BOOST_OFFSET = 12;
 const LOW_COUNT_REGISTER_THRESHOLD = 100;
 
 let members = [];
+let graduatedMembers = [];
+let selectableMembers = [];
 let memberStats = {};
 let detections = [];
 let assignments = [];
@@ -156,9 +159,21 @@ async function readJsonResponse(res){
 }
 
 async function loadMembers(){
-  const res = await fetch(MEMBER_URL, {cache:'no-store'});
-  const data = await res.json();
-  members = Object.values(data).filter(m => m && m.name);
+  const [activeRes, gradRes] = await Promise.all([
+    fetch(MEMBER_URL, {cache:'no-store'}),
+    fetch(GRAD_MEMBER_URL, {cache:'no-store'}).catch(() => null)
+  ]);
+  const activeData = await activeRes.json();
+  const gradData = gradRes && gradRes.ok ? await gradRes.json() : {};
+  members = normalizeMembers(activeData);
+  graduatedMembers = normalizeMembers(gradData);
+  selectableMembers = [...members, ...graduatedMembers];
+}
+
+function normalizeMembers(data){
+  return Object.values(data || {})
+    .filter(m => m && m.name)
+    .filter((member, index, list) => list.findIndex(row => row.name === member.name) === index);
 }
 
 async function loadMemberStats(){
@@ -375,7 +390,7 @@ function euclideanDistance(a, b){
 }
 
 function getBlogMemberFallbackIndex(blogMember, currentAssignments){
-  if(!blogMember || !members.some(m => m.name === blogMember) || currentAssignments.includes(blogMember)) return -1;
+  if(!blogMember || !selectableMembers.some(m => m.name === blogMember) || currentAssignments.includes(blogMember)) return -1;
   if(!labeledDescriptorRows.length || currentAssignments.some(Boolean)) return -1;
   const targetIndex = getLargestUnassignedFaceIndex(currentAssignments);
   if(targetIndex < 0) return -1;
@@ -474,7 +489,7 @@ function renderFaceOptions(){
 
     const select = document.createElement('select');
     select.className = 'face-member-select';
-    select.innerHTML = `<option value="">メンバーを選択</option>` + members.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('');
+    select.innerHTML = renderMemberSelectOptions();
     select.value = assigned ? assignments[i] : '';
     select.onclick = e => e.stopPropagation();
     select.onchange = e => {
@@ -508,6 +523,15 @@ function renderFaceOptions(){
     node.appendChild(body);
     faceList.appendChild(node);
   });
+}
+
+function renderMemberSelectOptions(){
+  return `<option value="">メンバーを選択</option>` + renderMemberOptionGroup('現役メンバー', members) + renderMemberOptionGroup('卒業メンバー', graduatedMembers);
+}
+
+function renderMemberOptionGroup(title, list){
+  if(!list.length) return '';
+  return `<optgroup label="${escapeHtml(title)}">` + list.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('') + '</optgroup>';
 }
 
 function drawFaceCrop(canvas, det){

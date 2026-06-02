@@ -81,6 +81,7 @@ h1{font-size:1.8rem;line-height:1.25;margin:0;font-weight:700;}
 .face-skip{margin-top:4px;width:100%;border:none;background:transparent;color:#9ca3af;font-size:.68rem;font-weight:700;text-align:left;padding:2px 0;cursor:pointer;}
 .face-skip:hover{color:#374151;}
 .member-filter{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:6px;margin-top:7px;max-height:132px;overflow:auto;padding-right:2px;}
+.member-filter-heading{grid-column:1/-1;font-size:.68rem;font-weight:700;color:#9ca3af;margin:5px 2px 1px;}
 .member-filter label{display:flex;align-items:center;gap:6px;border:1.5px solid #f3f4f6;border-radius:999px;padding:6px 9px;font-size:.72rem;font-weight:700;color:#4b5563;background:#fff;}
 .member-filter input{width:14px;height:14px;accent-color:#1f2937;flex-shrink:0;}
 .filter-open{width:100%;margin-top:10px;justify-content:flex-start;}
