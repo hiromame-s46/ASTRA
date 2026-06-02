@@ -107,7 +107,7 @@ function showAccessMessage(title, detail){
   document.querySelector('.sort-bottom-bar')?.classList.add('hidden');
   const panel = document.createElement('section');
   panel.className = 'panel access-panel';
-  panel.innerHTML = `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p><a class="button primary" href="../sakulabo/mypage/">ログインへ</a>`;
+  panel.innerHTML = `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p><a class="button primary" href="../mypage/">ログインへ</a>`;
   document.querySelector('main.wrap')?.appendChild(panel);
 }
 
@@ -316,18 +316,18 @@ function resolveUniquePredictions(){
 }
 
 function getMemberCandidates(descriptor){
-  return window.SakuFaceIndex.candidates(descriptorIndex, descriptor, {
+  return window.AstraFaceIndex.candidates(descriptorIndex, descriptor, {
     refineTopMembers: 12,
     topK: CANDIDATE_TOP_K
   });
 }
 
 function getRobustDistance(descriptor, descriptors){
-  return window.SakuFaceIndex.robustDistance(descriptor, descriptors, CANDIDATE_TOP_K);
+  return window.AstraFaceIndex.robustDistance(descriptor, descriptors, CANDIDATE_TOP_K);
 }
 
 function euclideanDistance(a, b){
-  return window.SakuFaceIndex.euclideanDistance(a, b);
+  return window.AstraFaceIndex.euclideanDistance(a, b);
 }
 
 function getBlogMemberFallbackIndex(blogMember, currentAssignments){
@@ -649,7 +649,7 @@ function getFaceQuality(det){
 async function loadMatcher(){
   const res = await fetch('./api.php?action=descriptors', {cache:'no-store'});
   const data = await res.json();
-  descriptorIndex = window.SakuFaceIndex.build(data, {
+  descriptorIndex = window.AstraFaceIndex.build(data, {
     maxPrototypes: 32,
     refineTopMembers: 12,
     topK: CANDIDATE_TOP_K

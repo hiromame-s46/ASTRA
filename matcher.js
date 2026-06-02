@@ -171,7 +171,7 @@
     return Math.sqrt(sum);
   }
 
-  window.SakuFaceIndex = {
+  window.AstraFaceIndex = {
     build,
     candidates,
     robustDistance,
