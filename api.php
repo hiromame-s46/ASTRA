@@ -21,6 +21,8 @@ $action = $_GET['action'] ?? $_POST['action'] ?? '';
 try {
     match ($action) {
         'auth_me' => send_json(['ok' => true, 'data' => current_auth_user()]),
+        'auth_login' => auth_login(),
+        'auth_logout' => auth_logout(),
         'descriptors' => send_json(read_json($descriptorFile)),
         'stats' => send_json(build_stats($descriptorFile)),
         'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir),
@@ -144,8 +146,7 @@ function save_descriptor(string $descriptorFile, string $statsFile, string $uplo
 function auth_db(): PDO {
     static $pdo = null;
     if ($pdo) return $pdo;
-    $configPath = getenv('ASTRA_AUTH_CONFIG') ?: __DIR__ . '/../api/config.php';
-    if (!is_file($configPath)) $configPath = __DIR__ . '/../../../../api/config.php';
+    $configPath = auth_config_path();
     if (!is_file($configPath)) throw new RuntimeException('auth config is missing');
     $config = require $configPath;
     $dsn = sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $config['host'], $config['dbname']);
@@ -158,12 +159,93 @@ function auth_db(): PDO {
     return $pdo;
 }
 
+function auth_config_path(): string {
+    $envPath = getenv('ASTRA_AUTH_CONFIG');
+    if ($envPath && is_file($envPath)) return $envPath;
+
+    $candidates = [
+        __DIR__ . '/../api/config.php',
+        __DIR__ . '/../../api/config.php',
+        __DIR__ . '/../../../api/config.php',
+        __DIR__ . '/../../../../api/config.php',
+    ];
+    foreach ($candidates as $path) {
+        if (is_file($path)) return $path;
+    }
+    return $envPath ?: __DIR__ . '/../../../../api/config.php';
+}
+
 function auth_token(): ?string {
     $h = $_SERVER['HTTP_X_SESSION_TOKEN']
       ?? $_SERVER['HTTP_AUTHORIZATION']
+      ?? ($_COOKIE['astra_token'] ?? null)
       ?? ($_COOKIE['sakulabo_token'] ?? null);
     if (!$h) return null;
     return preg_replace('/^Bearer\s+/i', '', trim($h));
+}
+
+function set_auth_cookie(string $token): void {
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    $options = [
+        'expires' => time() + 720 * 3600,
+        'path' => '/',
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+    setcookie('astra_token', $token, $options);
+    setcookie('sakulabo_token', $token, $options);
+}
+
+function clear_auth_cookie(): void {
+    $options = [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+    setcookie('astra_token', '', $options);
+    setcookie('sakulabo_token', '', $options);
+}
+
+function auth_login(): never {
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
+    $username = trim((string)($payload['username'] ?? ''));
+    $password = (string)($payload['password'] ?? '');
+    if ($username === '' || $password === '') {
+        send_json(['ok' => false, 'error' => 'ユーザー名とパスワードを入力してください。'], 400);
+    }
+
+    $st = auth_db()->prepare('SELECT * FROM sakulabo_users WHERE username = ? LIMIT 1');
+    $st->execute([$username]);
+    $user = $st->fetch();
+    if (!$user || !password_verify($password, (string)$user['password_hash'])) {
+        send_json(['ok' => false, 'error' => 'ユーザー名またはパスワードが正しくありません。'], 401);
+    }
+
+    auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE user_id = ?')->execute([$user['id']]);
+    auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE expires_at < NOW()')->execute();
+    $token = bin2hex(random_bytes(32));
+    $expires = date('Y-m-d H:i:s', time() + 720 * 3600);
+    auth_db()->prepare('INSERT INTO sakulabo_sessions (token, user_id, expires_at) VALUES (?,?,?)')
+        ->execute([$token, $user['id'], $expires]);
+    set_auth_cookie($token);
+    send_json(['ok' => true, 'data' => [
+        'token' => $token,
+        'user' => [
+            'id' => (int)$user['id'],
+            'username' => (string)$user['username'],
+            'display_name' => (string)$user['display_name'],
+        ],
+    ]]);
+}
+
+function auth_logout(): never {
+    $token = auth_token();
+    if ($token) auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE token = ?')->execute([$token]);
+    clear_auth_cookie();
+    send_json(['ok' => true, 'data' => null]);
 }
 
 function current_auth_user(): ?array {

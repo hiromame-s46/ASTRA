@@ -116,8 +116,52 @@ function showAccessMessage(title, detail){
   document.getElementById('blog-bottom-bar')?.classList.add('hidden');
   const panel = document.createElement('section');
   panel.className = 'panel access-panel';
-  panel.innerHTML = `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p><a class="button primary" href="../mypage/">ログインへ</a>`;
+  panel.innerHTML = `
+    <h2>${escapeHtml(title)}</h2>
+    <p>${escapeHtml(detail)}</p>
+    <form class="access-login" onsubmit="handleAccessLogin(event)">
+      <input class="field" id="access-username" name="username" autocomplete="username" placeholder="ユーザー名">
+      <input class="field" id="access-password" name="password" type="password" autocomplete="current-password" placeholder="パスワード">
+      <button class="button primary" id="access-login-btn" type="submit">ログイン</button>
+      <div class="access-login-error" id="access-login-error"></div>
+    </form>`;
   document.querySelector('main.wrap')?.appendChild(panel);
+}
+
+async function handleAccessLogin(event){
+  event.preventDefault();
+  const username = document.getElementById('access-username')?.value.trim() || '';
+  const password = document.getElementById('access-password')?.value || '';
+  const errorEl = document.getElementById('access-login-error');
+  const btn = document.getElementById('access-login-btn');
+  if(errorEl) errorEl.style.display = 'none';
+  if(btn) btn.disabled = true;
+  try{
+    const res = await fetch('./api.php?action=auth_login', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username, password})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || 'ログインに失敗しました。');
+    location.reload();
+  }catch(e){
+    if(errorEl){
+      errorEl.textContent = e.message || 'ログインに失敗しました。';
+      errorEl.style.display = 'block';
+    }
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function readJsonResponse(res){
+  try{
+    return await res.json();
+  }catch(e){
+    return {ok:false, error:'ログイン処理でエラーが発生しました。時間をおいて再度お試しください。'};
+  }
 }
 
 uploadInput.addEventListener('change', async () => {
