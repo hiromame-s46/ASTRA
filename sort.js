@@ -15,10 +15,14 @@ const LOW_COUNT_BOOST_MAX = 2.2;
 const LOW_COUNT_BOOST_SCALE = 18;
 const LOW_COUNT_BOOST_OFFSET = 12;
 const LOW_COUNT_REGISTER_THRESHOLD = 100;
+const LOW_COUNT_BLOG_PRIORITY_THRESHOLD = 100;
+const LOW_COUNT_BLOG_PRIORITY_RATE = 0.72;
+const LOW_COUNT_ACTIVE_BLOG_WEIGHT = 8;
 
 let members = [];
 let graduatedMembers = [];
 let selectableMembers = [];
+let activeMemberNames = new Set();
 let memberStats = {};
 let detections = [];
 let assignments = [];
@@ -167,6 +171,7 @@ async function loadMembers(){
   members = normalizeMembers(activeData, ACTIVE_MEMBER_EXCLUDES);
   graduatedMembers = normalizeMembers(gradData);
   selectableMembers = [...members, ...graduatedMembers];
+  activeMemberNames = new Set(members.map(m => m.name));
 }
 
 async function fetchFirstJson(urls, fallback){
@@ -213,24 +218,61 @@ async function loadImageQueue(){
     .sort((a,b) => parseDate(b.date) - parseDate(a.date));
   const recentBlogs = weightedShuffle(sortedBlogs.slice(0, RECENT_BLOG_KEEP), getBlogTrainingWeight);
   const olderBlogs = weightedSample(sortedBlogs.slice(RECENT_BLOG_KEEP), OLDER_BLOG_SAMPLE, getBlogTrainingWeight);
-  const targetBlogs = shuffle([...recentBlogs, ...olderBlogs]);
+  const targetBlogs = buildPrioritizedBlogList([...recentBlogs, ...olderBlogs]);
 
-  imageQueue = shuffle(targetBlogs.flatMap((blog, blogOrder) => {
+  imageQueue = targetBlogs.flatMap((blog, blogOrder) => {
     const images = Array.isArray(blog.images) && blog.images.length ? blog.images : (blog.thumb ? [blog.thumb] : []);
-    return images.map((url, imageOrder) => ({
+    return shuffle(images.map((url, imageOrder) => ({
       ...blog,
       blogOrder,
       imageOrder,
       image_url: url,
       imageCount: images.length
-    }));
-  }));
+    })));
+  });
 }
 
 function getBlogTrainingWeight(blog){
-  const count = Number(memberStats?.[blog.member]?.count || 0);
+  const count = getMemberTrainingCount(blog.member);
   const boost = Math.min(LOW_COUNT_BOOST_MAX - 1, LOW_COUNT_BOOST_SCALE / (count + LOW_COUNT_BOOST_OFFSET));
-  return 1 + boost;
+  return (1 + boost) * (isLowCountActiveBlog(blog) ? LOW_COUNT_ACTIVE_BLOG_WEIGHT : 1);
+}
+
+function buildPrioritizedBlogList(blogs){
+  const priority = [];
+  const rest = [];
+  const seen = new Set();
+  blogs.forEach(blog => {
+    const key = blog.link || `${blog.member || ''}:${blog.date || ''}:${blog.title || ''}`;
+    if(seen.has(key)) return;
+    seen.add(key);
+    if(isLowCountActiveBlog(blog)) priority.push(blog);
+    else rest.push(blog);
+  });
+  return weightedInterleave(
+    weightedShuffle(priority, getBlogTrainingWeight),
+    weightedShuffle(rest, getBlogTrainingWeight),
+    LOW_COUNT_BLOG_PRIORITY_RATE
+  );
+}
+
+function isLowCountActiveBlog(blog){
+  return activeMemberNames.has(blog.member) && getMemberTrainingCount(blog.member) <= LOW_COUNT_BLOG_PRIORITY_THRESHOLD;
+}
+
+function getMemberTrainingCount(member){
+  return Number(memberStats?.[member]?.count || 0);
+}
+
+function weightedInterleave(priority, rest, priorityRate){
+  const left = priority.slice();
+  const right = rest.slice();
+  const result = [];
+  while(left.length || right.length){
+    const pickPriority = left.length && (!right.length || Math.random() < priorityRate);
+    result.push((pickPriority ? left : right).shift());
+  }
+  return result;
 }
 
 function weightedSample(items, count, weightFn){
