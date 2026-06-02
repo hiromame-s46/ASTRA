@@ -1,6 +1,6 @@
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
-const MEMBER_URL = '../data/member.json';
-const GRAD_MEMBER_URL = '../data/member_grad.json';
+const MEMBER_URLS = ['../data/member.json', '/data/member.json', './data/member.json'];
+const GRAD_MEMBER_URLS = ['../data/member_grad.json', '/data/member_grad.json', './data/member_grad.json'];
 const BLOG_URL = '../data/blogs.json';
 const ACTIVE_MEMBER_EXCLUDES = new Set(['小池 美波']);
 const RECENT_BLOG_KEEP = 80;
@@ -160,15 +160,32 @@ async function readJsonResponse(res){
 }
 
 async function loadMembers(){
-  const [activeRes, gradRes] = await Promise.all([
-    fetch(MEMBER_URL, {cache:'no-store'}),
-    fetch(GRAD_MEMBER_URL, {cache:'no-store'}).catch(() => null)
+  const [activeData, gradData] = await Promise.all([
+    fetchFirstJson(MEMBER_URLS),
+    fetchFirstJson(GRAD_MEMBER_URLS, {})
   ]);
-  const activeData = await activeRes.json();
-  const gradData = gradRes && gradRes.ok ? await gradRes.json() : {};
   members = normalizeMembers(activeData, ACTIVE_MEMBER_EXCLUDES);
   graduatedMembers = normalizeMembers(gradData);
   selectableMembers = [...members, ...graduatedMembers];
+}
+
+async function fetchFirstJson(urls, fallback){
+  const list = Array.isArray(urls) ? urls : [urls];
+  const errors = [];
+  for(const url of list){
+    try{
+      const res = await fetch(url, {cache:'no-store'});
+      if(!res.ok) throw new Error(`${url}: ${res.status}`);
+      return await res.json();
+    }catch(e){
+      errors.push(e);
+    }
+  }
+  if(arguments.length >= 2){
+    console.warn('optional json not found', list, errors);
+    return fallback;
+  }
+  throw errors[0] || new Error('json not found');
 }
 
 function normalizeMembers(data, excludes=new Set()){
