@@ -51,6 +51,7 @@ const sortAccessList = document.getElementById('sort-access-list');
 const sortAccessStatus = document.getElementById('sort-access-status');
 const sortAccessUserId = document.getElementById('sort-access-user-id');
 const sortAccessAddBtn = document.getElementById('sort-access-add-btn');
+const sortAccessOpenBtn = document.getElementById('sort-access-open-btn');
 const undoBtn = document.getElementById('undo-btn');
 const undoBottomBtn = document.getElementById('undo-bottom-btn');
 const saveBottomBtn = document.getElementById('save-bottom-btn');
@@ -66,6 +67,7 @@ efficientModeToggle.addEventListener('change', () => {
 async function init(){
   authUser = await ensurePageAccess({adminOnly:true});
   if(!authUser) return;
+  updateSortAccessVisibility();
 
   try{
     document.body.dataset.trainMode = mode;
@@ -95,6 +97,10 @@ async function init(){
     console.error(e);
     setStatus('顔認識モデルの読み込みに失敗しました。通信環境を確認して再読み込みしてください。', true);
   }
+}
+
+function updateSortAccessVisibility(){
+  sortAccessOpenBtn?.classList.toggle('hidden', Number(authUser?.id) !== 1);
 }
 
 async function ensurePageAccess({adminOnly=false}={}){
@@ -332,6 +338,7 @@ function closeMemberModal(event){
 }
 
 async function openSortAccessModal(){
+  if(Number(authUser?.id) !== 1) return;
   sortAccessModal?.classList.remove('hidden');
   await loadSortAccessUsers();
 }

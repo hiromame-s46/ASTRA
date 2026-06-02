@@ -32,7 +32,7 @@
     <div class="top-links">
       <a class="button soft" href="./"><i class="fas fa-wand-magic-sparkles"></i>判定画面</a>
       <a class="button soft" href="./sort.html"><i class="fas fa-images"></i>仕分け専用</a>
-      <button class="button soft" type="button" onclick="openSortAccessModal()"><i class="fas fa-user-lock"></i>Sort権限</button>
+      <button class="button soft hidden" id="sort-access-open-btn" type="button" onclick="openSortAccessModal()"><i class="fas fa-user-lock"></i>Sort権限</button>
     </div>
   </section>
 
@@ -146,6 +146,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 <script src="./matcher.js"></script>
-<script src="./train.js?v=20260603-sort-access"></script>
+<script src="./train.js?v=20260603-sort-access-admin-only"></script>
 </body>
 </html>
