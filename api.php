@@ -42,7 +42,19 @@ try {
 }
 
 function read_json(string $path): array {
-    $raw = file_get_contents($path);
+    $fp = fopen($path, 'r');
+    if (!$fp) return [];
+    try {
+        flock($fp, LOCK_SH);
+        $raw = stream_get_contents($fp);
+    } finally {
+        flock($fp, LOCK_UN);
+        fclose($fp);
+    }
+    return decode_json_array($raw ?: '{}');
+}
+
+function decode_json_array(string $raw): array {
     $json = json_decode($raw ?: '{}', true);
     return is_array($json) ? $json : [];
 }
@@ -50,38 +62,42 @@ function read_json(string $path): array {
 function write_json_locked(string $path, array $data): void {
     $fp = fopen($path, 'c+');
     if (!$fp) throw new RuntimeException('failed to open json');
-    flock($fp, LOCK_EX);
-    ftruncate($fp, 0);
-    rewind($fp);
-    $json = $data === [] ? '{}' : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    fwrite($fp, $json . "\n");
-    fflush($fp);
-    flock($fp, LOCK_UN);
-    fclose($fp);
-}
-
-function mutate_json_locked(string $path, callable $mutator): array {
-    $fp = fopen($path, 'c+');
-    if (!$fp) throw new RuntimeException('failed to open json');
-    flock($fp, LOCK_EX);
-    rewind($fp);
-    $raw = stream_get_contents($fp);
-    $json = json_decode($raw ?: '{}', true);
-    $data = is_array($json) ? $json : [];
-    $next = $mutator($data);
-    if (!is_array($next)) {
+    try {
+        flock($fp, LOCK_EX);
+        ftruncate($fp, 0);
+        rewind($fp);
+        $json = $data === [] ? '{}' : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        fwrite($fp, $json . "\n");
+        fflush($fp);
+    } finally {
         flock($fp, LOCK_UN);
         fclose($fp);
-        throw new RuntimeException('json mutator returned invalid data');
     }
-    ftruncate($fp, 0);
-    rewind($fp);
-    $encoded = $next === [] ? '{}' : json_encode($next, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    fwrite($fp, $encoded . "\n");
-    fflush($fp);
-    flock($fp, LOCK_UN);
-    fclose($fp);
-    return $next;
+}
+
+function mutate_json_locked(string $path, callable $mutator, ?callable $afterWrite = null): array {
+    $fp = fopen($path, 'c+');
+    if (!$fp) throw new RuntimeException('failed to open json');
+    try {
+        flock($fp, LOCK_EX);
+        rewind($fp);
+        $raw = stream_get_contents($fp);
+        $data = decode_json_array($raw ?: '{}');
+        $next = $mutator($data);
+        if (!is_array($next)) {
+            throw new RuntimeException('json mutator returned invalid data');
+        }
+        ftruncate($fp, 0);
+        rewind($fp);
+        $encoded = $next === [] ? '{}' : json_encode($next, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        fwrite($fp, $encoded . "\n");
+        fflush($fp);
+        if ($afterWrite) $afterWrite($next);
+        return $next;
+    } finally {
+        flock($fp, LOCK_UN);
+        fclose($fp);
+    }
 }
 
 function send_json(array $data, int $status = 200): never {
@@ -197,13 +213,18 @@ function save_descriptor(string $descriptorFile, string $statsFile, string $uplo
     ];
 
     $count = 0;
-    $data = mutate_json_locked($descriptorFile, static function (array $data) use ($member, $row, &$count): array {
-        if (!isset($data[$member]) || !is_array($data[$member])) $data[$member] = [];
-        $data[$member][] = $row;
-        $count = count($data[$member]);
-        return $data;
-    });
-    write_json_locked($statsFile, build_stats_from_data($data));
+    mutate_json_locked(
+        $descriptorFile,
+        static function (array $data) use ($member, $row, &$count): array {
+            if (!isset($data[$member]) || !is_array($data[$member])) $data[$member] = [];
+            $data[$member][] = $row;
+            $count = count($data[$member]);
+            return $data;
+        },
+        static function (array $data) use ($statsFile): void {
+            write_json_locked($statsFile, build_stats_from_data($data));
+        }
+    );
 
     cleanup_uploads($uploadDir);
     send_json(['ok' => true, 'id' => $id, 'member' => $member, 'count' => $count]);
@@ -433,24 +454,29 @@ function delete_descriptors(string $descriptorFile, string $statsFile, string $u
     $idSet = array_fill_keys($ids, true);
 
     $deleted = 0;
-    $data = mutate_json_locked($descriptorFile, static function (array $data) use ($idSet, &$deleted): array {
-        foreach ($data as $member => $rows) {
-            if (!is_array($rows)) continue;
-            $nextRows = [];
-            foreach ($rows as $row) {
-                $id = is_array($row) ? (string)($row['id'] ?? '') : '';
-                if ($id !== '' && isset($idSet[$id])) {
-                    $deleted++;
-                    continue;
+    mutate_json_locked(
+        $descriptorFile,
+        static function (array $data) use ($idSet, &$deleted): array {
+            foreach ($data as $member => $rows) {
+                if (!is_array($rows)) continue;
+                $nextRows = [];
+                foreach ($rows as $row) {
+                    $id = is_array($row) ? (string)($row['id'] ?? '') : '';
+                    if ($id !== '' && isset($idSet[$id])) {
+                        $deleted++;
+                        continue;
+                    }
+                    $nextRows[] = $row;
                 }
-                $nextRows[] = $row;
+                if ($nextRows) $data[$member] = array_values($nextRows);
+                else unset($data[$member]);
             }
-            if ($nextRows) $data[$member] = array_values($nextRows);
-            else unset($data[$member]);
+            return $data;
+        },
+        static function (array $data) use ($statsFile): void {
+            write_json_locked($statsFile, build_stats_from_data($data));
         }
-        return $data;
-    });
-    write_json_locked($statsFile, build_stats_from_data($data));
+    );
     cleanup_uploads($uploadDir);
     send_json(['ok' => true, 'deleted' => $deleted]);
 }

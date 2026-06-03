@@ -17,8 +17,8 @@ const LOW_COUNT_BOOST_OFFSET = 12;
 const LOW_COUNT_REGISTER_THRESHOLD = 100;
 const BLOG_PRIORITY_TIERS = [
   {maxCount:10, weight:18},
-  {maxCount:50, weight:8},
-  {maxCount:100, weight:3},
+  {maxCount:30, weight:8},
+  {maxCount:50, weight:3},
   {maxCount:Infinity, weight:1}
 ];
 
@@ -276,13 +276,27 @@ function weightedInterleaveBuckets(buckets, weights){
   const queues = buckets.map(bucket => bucket.slice());
   const result = [];
   while(queues.some(queue => queue.length)){
-    const available = queues
+    let available = queues
       .map((queue, index) => ({queue, index, weight:weights[index]}))
       .filter(row => row.queue.length);
+    const lastMember = result.length ? result[result.length - 1].member : '';
+    const nonRepeating = available.filter(row => queueHasDifferentMember(row.queue, lastMember));
+    if(nonRepeating.length) available = nonRepeating;
     const picked = pickWeightedIndex(available, row => row.weight);
-    result.push(available[picked].queue.shift());
+    result.push(takeNextBlog(available[picked].queue, lastMember));
   }
   return result;
+}
+
+function queueHasDifferentMember(queue, member){
+  return !member || queue.some(blog => blog.member !== member);
+}
+
+function takeNextBlog(queue, previousMember){
+  if(!previousMember || queue[0]?.member !== previousMember) return queue.shift();
+  const index = queue.findIndex(blog => blog.member !== previousMember);
+  if(index <= 0) return queue.shift();
+  return queue.splice(index, 1)[0];
 }
 
 function weightedSample(items, count, weightFn){
