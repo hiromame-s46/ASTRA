@@ -55,6 +55,7 @@ ASTRAは、顔画像を「検出する」「特徴量に変換する」「登録
 - 登録件数や最終更新日を表示する学習統計
 - 外部画像取得用の画像プロキシ
 - ログイン状態に応じた学習・仕分け権限制御
+- Sort利用者の個別許可、一時停止、全員解放モード
 
 ### 画面
 
@@ -146,7 +147,7 @@ sort.html   仕分け専用画面
 4. 間違っていれば顔ごとにメンバーを修正する
 5. 登録またはスキップする
 
-仕分け画面では、登録件数が少ないメンバーのブログ画像がやや出やすくなるように重み付けしています。
+仕分け画面では、登録件数が少ない現役メンバーのブログ画像が優先的に出やすくなるように重み付けしています。登録件数10件以下、50件以下、100件以下の段階に分け、少ない段階ほど高い確率で表示されます。
 
 ### ディレクトリ構成
 
@@ -163,7 +164,8 @@ sort.html   仕分け専用画面
 ├── style.css
 ├── data/
 │   ├── descriptors.json
-│   └── stats.json
+│   ├── stats.json
+│   └── sort_access.json
 ├── assets/
 │   ├── astra-logo.jpg
 │   └── astra-logo.png
@@ -221,7 +223,7 @@ style.css    共通UIスタイル
 - JSONファイル保存
 - `flock` によるファイルロック
 - PDO
-- Cookie / Headerベースのセッショントークン
+- サーバー側セッション検証
 - 外部画像プロキシ
 
 データベースは認証確認に使用します。顔descriptorと統計はJSONファイルとして保存します。
@@ -339,6 +341,24 @@ https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model
 
 一方、判定画面では結果表示を優先し、品質が低めでも参考候補を出します。
 
+#### 効率学習モード
+
+効率学習モードは、事前推論の結果を学習操作に直接つなげるための仕組みです。画像を表示する前に現在のdescriptorインデックスで推論し、顔ごとの選択欄に候補を反映します。協力者は、正しい推論であればそのまま次へ進み、誤っている顔だけを修正して登録できます。
+
+このモードでは、推論結果と人間の選択が変わっていない顔を原則として保存対象から外します。ただし登録件数が少ないメンバーについては、正解確認そのものにも学習価値があるため、一定件数以下では正解時にも保存できるようにしています。これにより、すでに十分なデータがあるメンバーへの過剰登録を抑えながら、データが薄いメンバーを補強できます。
+
+#### 段階的Sort優先キュー
+
+仕分け画面では、ブログ画像を完全な均等ランダムではなく、登録件数に応じた段階的な優先キューで並べます。現役メンバーを対象に、登録数10件以下を第一優先、50件以下を第二優先、100件以下を第三優先とし、それ以外を通常枠として扱います。
+
+各優先枠の中ではランダム性を維持し、同じメンバーや同じ時期のブログに偏りすぎないようにします。優先枠同士は重み付きで混ぜるため、少ないメンバーほど出やすい一方で、通常枠の画像も完全には途切れません。この設計は、協力者の作業を単調にしないことと、データ不足の解消を両立するためのものです。
+
+#### Sort権限ゲート
+
+Sortは協力者がdescriptorを登録できる画面であるため、単なる画面表示だけでなく、保存API側でも権限を確認します。権限設定はJSONで管理し、標準では個別許可モードです。管理者はTrain画面から、Buddies profile IDを使って利用者を追加、一時停止、削除できます。
+
+また、一時的に広く協力を募るための全員解放モードもあります。このモードでもログインは必須で、未ログインの保存は許可されません。全員解放中も個別リストは保持されるため、必要に応じて個別許可モードへ戻せます。
+
 ### データ構造
 
 #### `data/descriptors.json`
@@ -378,6 +398,28 @@ https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model
 ```
 
 統計は `api.php?action=stats` でdescriptorから再構築できます。
+
+#### `data/sort_access.json`
+
+Sort画面の利用権限を管理します。
+
+```json
+{
+  "mode": "limited",
+  "users": {
+    "1": {
+      "user_id": 1,
+      "username": "hiromame",
+      "display_name": "hiromame",
+      "status": "active",
+      "created_at": "",
+      "updated_at": ""
+    }
+  }
+}
+```
+
+`mode` は `limited` または `all` です。`limited` では `users` に登録された有効ユーザーだけがSortを利用できます。`all` ではログイン済みユーザー全員が利用できます。`status` は `active` または `paused` で、一時停止中のユーザーは個別許可モードでは利用できません。
 
 #### 共有マスターデータ
 
@@ -496,41 +538,70 @@ GET api.php?action=proxy_image&url=https%3A%2F%2Fexample.com%2Fimage.jpg
 - 最大取得サイズは8MB
 - MIME typeが画像であることを確認
 - リダイレクトは最大3回
+- private/reserved IPへの到達を拒否
+- リダイレクト先も同じURL検証を実施
 
 ### 認証と権限
 
-ASTRAはCookieまたはHeaderからセッショントークンを読み取り、DB上のセッションと照合します。
-
-利用できるトークン入力:
-
-```text
-Cookie
-Authorization Header
-X-Session-Token Header
-```
-
-DB設定ファイルの解決順:
-
-```text
-ASTRA_AUTH_CONFIG
-../api/config.php
-../../../../api/config.php
-```
+ASTRAはログイン済みセッションをサーバー側で検証し、画面表示だけでなく保存APIでも権限を確認します。認証情報や接続設定の具体値はリポジトリに含めず、実行環境側で安全に管理する前提です。
 
 権限:
 
 ```text
 index.html  認証不要
 train.html  管理者のみ
-sort.html   ログインユーザー
+sort.html   ログイン必須、Sort権限設定に従う
 ```
 
 保存APIの扱い:
 
-- `source` が `sort` の保存はログインユーザーに許可
+- `source` が `sort` の保存はSort権限を持つログインユーザーのみ許可
 - それ以外の保存は管理者のみ許可
+- descriptor削除は管理者のみ許可
 - 未ログインの場合は401
 - 権限不足の場合は403
+
+Sort権限:
+
+- 標準は個別許可モード
+- 初期状態では管理者ユーザーのみ有効
+- 管理者はTrain画面からBuddies profile IDで利用者を追加できる
+- 利用者ごとに有効、一時停止、削除を切り替えられる
+- 全員解放モードでは、ログイン済みユーザー全員がSortを利用できる
+- 全員解放モードでも未ログインユーザーは保存できない
+
+### セキュリティ
+
+ASTRAは顔descriptorを扱うため、通常のWebアプリケーションよりも慎重な運用が必要です。descriptorは画像そのものではありませんが、顔特徴量に由来するデータであり、公開範囲、バックアップ、権限、削除運用を明確にして扱うべきデータです。
+
+実装上の保護:
+
+- APIレスポンスに内部例外の詳細を直接返さない
+- JSON APIレスポンスに `no-store` を付ける
+- 更新系APIはPOSTのみ受け付ける
+- JSON payloadのサイズを制限する
+- ログイン応答でセッショントークンを本文に含めない
+- CookieはHTTP only、SameSite属性付きで発行する
+- descriptor保存時に128次元配列であることを検証する
+- descriptor削除は管理者に限定する
+- Sort保存はSort権限を持つログインユーザーに限定する
+- 画像プロキシはHTTP/HTTPSのみを許可する
+- 画像プロキシはprivate/reserved IPへの到達を拒否する
+- リダイレクト先も同じURL検証を通す
+- 取得サイズと画像MIME typeを確認する
+
+運用上の注意:
+
+- `data/descriptors.json`、`data/stats.json`、`data/sort_access.json` は直接公開・編集できる場所に置かない
+- API経由の読み取りが必要な範囲だけを公開する
+- 認証設定、DB接続情報、セッション保存先はリポジトリに含めない
+- 本番環境ではHTTPSを使う
+- 管理者アカウントは最小限にする
+- Sortの全員解放モードは期間を決めて使う
+- 不要になった権限は一時停止または削除する
+- バックアップにはdescriptorが含まれるため、配布先と保管期間を管理する
+- 画像プロキシは便利な一方で外部通信を伴うため、ログと利用状況を定期的に確認する
+- CDNライブラリを使う場合は、読み込み元やバージョンの変更に注意する
 
 ### デザイン仕様
 
@@ -568,12 +639,13 @@ web-root/
 │   ├── api.php
 │   └── data/
 │       ├── descriptors.json
-│       └── stats.json
+│       ├── stats.json
+│       └── sort_access.json
 ├── data/
 │   ├── member.json
+│   ├── member_grad.json
 │   └── blogs.json
-└── api/
-    └── config.php
+└── secure-auth-config
 ```
 
 確認ポイント:
@@ -584,6 +656,9 @@ web-root/
 - `/ASTRA/api.php?action=descriptors` がJSONを返す
 - `/ASTRA/api.php?action=stats` がJSONを返す
 - 学習・仕分け画面でログイン確認が動く
+- Sort権限モードが想定通りに動く
+- descriptor保存・削除が権限不足で拒否される
+- 画像プロキシがprivate/reserved IPを拒否する
 
 ローカル確認例:
 
@@ -626,6 +701,7 @@ Design principles:
 - Training statistics by member
 - External image proxy
 - Permission control for training and sorting pages
+- Individual sorting access, paused users, and public sorting mode
 
 ### Pages
 
@@ -717,7 +793,7 @@ ASTRA stores the generated 128-dimensional descriptors, not the original images.
 4. Correct member assignments if needed
 5. Register or skip the image
 
-The sorting workflow gives more opportunities to members with fewer registered descriptors.
+The sorting workflow gives more opportunities to active members with fewer registered descriptors. Members with 10 or fewer, 50 or fewer, and 100 or fewer descriptors are handled as separate priority tiers, and lower-count tiers appear more often while retaining randomness.
 
 ### Directory Structure
 
@@ -734,7 +810,8 @@ The sorting workflow gives more opportunities to members with fewer registered d
 ├── style.css
 ├── data/
 │   ├── descriptors.json
-│   └── stats.json
+│   ├── stats.json
+│   └── sort_access.json
 ├── assets/
 │   ├── astra-logo.jpg
 │   └── astra-logo.png
@@ -792,7 +869,7 @@ ASTRA detects face boxes with `ssdMobilenetv1`, extracts landmarks with `faceLan
 - JSON file storage
 - `flock` file locking
 - PDO
-- Cookie/Header based session tokens
+- Server-side session validation
 - External image proxy
 
 The database is used for authentication checks. Descriptors and statistics are stored as JSON files.
@@ -901,6 +978,24 @@ Excluded examples:
 
 The recognition page is intentionally more permissive and may still show a reference candidate.
 
+#### Efficient training mode
+
+Efficient training mode connects pre-inference directly to the data collection workflow. Before the user confirms a blog image, ASTRA runs the current descriptor index and fills member selectors with likely candidates for each detected face. A collaborator can move forward quickly when the prediction is correct, and only change the faces that are wrong.
+
+When the selected member is unchanged from the pre-filled prediction, ASTRA normally avoids saving a duplicate descriptor. However, members with a low descriptor count still benefit from additional confirmed examples, so correct predictions can still be registered below the configured count threshold. This balances two goals: avoiding excessive data for already well-covered members and increasing coverage for sparse members.
+
+#### Tiered sorting priority queue
+
+The sorting workflow does not use a flat random queue. It builds a tiered queue from blog images based on the descriptor count of active members. Members with 10 or fewer descriptors form the first priority tier, 50 or fewer form the second tier, and 100 or fewer form the third tier. All other images remain in the normal tier.
+
+Items inside each tier are shuffled, and tiers are mixed with weights rather than hard ordering. This means low-count members appear more often without making the queue feel deterministic. The goal is to make contributor time more useful while still preserving a varied sorting experience.
+
+#### Sorting access gate
+
+Sorting can create new descriptors, so access is checked on both the page and the API. The access policy is stored as JSON and defaults to individual permission mode. Administrators can add, pause, resume, or delete users from the training page by using their profile ID.
+
+ASTRA also supports a public sorting mode for temporary open collaboration. Public mode still requires login; anonymous saves are not accepted. The individual list remains intact while public mode is enabled, so administrators can return to individual permission mode later without rebuilding the list.
+
 ### Data Structures
 
 #### `data/descriptors.json`
@@ -940,6 +1035,28 @@ Stores descriptor counts and update timestamps.
 ```
 
 Statistics can be rebuilt from descriptors through `api.php?action=stats`.
+
+#### `data/sort_access.json`
+
+Stores the access policy for the sorting page.
+
+```json
+{
+  "mode": "limited",
+  "users": {
+    "1": {
+      "user_id": 1,
+      "username": "hiromame",
+      "display_name": "hiromame",
+      "status": "active",
+      "created_at": "",
+      "updated_at": ""
+    }
+  }
+}
+```
+
+`mode` is either `limited` or `all`. In `limited` mode, only active users listed under `users` can use sorting. In `all` mode, every logged-in user can use sorting. User `status` is either `active` or `paused`; paused users cannot use sorting when the mode is limited.
 
 #### Shared master data
 
@@ -1053,41 +1170,69 @@ Limits:
 - maximum image size: 8 MB
 - image MIME type required
 - up to 3 redirects
+- private and reserved IP destinations are blocked
+- redirect targets are validated with the same URL rules
 
 ### Authentication and Permissions
 
-ASTRA reads session tokens from Cookie or Headers.
-
-Accepted token sources:
-
-```text
-Cookie
-Authorization Header
-X-Session-Token Header
-```
-
-Database configuration lookup order:
-
-```text
-ASTRA_AUTH_CONFIG
-../api/config.php
-../../../../api/config.php
-```
+ASTRA validates logged-in sessions on the server and checks permissions not only on pages but also on write APIs. Authentication secrets and connection settings are expected to be managed by the runtime environment and are not part of this repository.
 
 Permission model:
 
 ```text
 index.html  no login required
 train.html  administrator only
-sort.html   logged-in user
+sort.html   login required, controlled by sorting access policy
 ```
 
 Save rules:
 
-- saves from sorting workflow are allowed for logged-in users
+- saves from sorting workflow require a logged-in user with sorting access
 - other training saves require administrator permission
+- descriptor deletion requires administrator permission
 - unauthenticated requests return 401
 - unauthorized requests return 403
+
+Sorting access:
+
+- default mode is individual permission
+- the initial access list contains only the administrator user
+- administrators can add users by profile ID from the training page
+- each user can be active, paused, or deleted
+- public sorting mode allows every logged-in user to use sorting
+- public sorting mode still rejects anonymous saves
+
+### Security
+
+ASTRA handles face descriptors, so it should be operated with more care than a generic static site. Descriptors are not original images, but they are derived from face data and should be treated as sensitive operational data. Access, backups, deletion, and sharing should be managed deliberately.
+
+Implementation protections:
+
+- API responses do not expose internal exception details
+- JSON API responses use `no-store`
+- write APIs require POST
+- JSON payload sizes are limited
+- login responses do not include session tokens in the body
+- cookies are issued with HTTP only and SameSite attributes
+- descriptor saves validate the 128-dimensional descriptor shape
+- descriptor deletion is administrator-only
+- sorting saves require sorting access
+- the image proxy accepts only HTTP/HTTPS URLs
+- the image proxy blocks private and reserved IP destinations
+- redirect targets are revalidated
+- downloaded image size and image MIME type are checked
+
+Operational guidance:
+
+- do not expose or manually edit `data/descriptors.json`, `data/stats.json`, or `data/sort_access.json` outside the intended API flow
+- keep authentication and database configuration outside the repository
+- use HTTPS in production
+- keep the administrator set small
+- use public sorting mode only for a defined collaboration period
+- pause or delete access when it is no longer needed
+- treat backups containing descriptors as sensitive
+- monitor image proxy usage because it performs outbound network requests
+- review CDN dependencies and model sources before production use
 
 ### Design
 
