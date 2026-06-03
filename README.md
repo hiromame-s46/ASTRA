@@ -1294,3 +1294,25 @@ php -S 127.0.0.1:8000
 ```
 
 Start the server from the parent web-root directory to test the relationship between `/ASTRA` and `/data`.
+
+## Final Notes / まとめ
+
+### 日本語
+
+ASTRA は Apache License 2.0 のもとで公開されるオープンソースソフトウェアです。ライセンスの範囲内で、利用、複製、変更、再配布、派生物の作成を行うことができます。詳細な条件はリポジトリ内の `LICENSE` を確認してください。
+
+本リポジトリには、アプリケーション本体、推論・学習ワークフロー、UI、API、サンプル構成に必要なファイルを含めています。一方で、実運用で生成される顔特徴量、統計情報、アクセス制御データ、アップロード画像、認証情報、データベース接続情報、秘密鍵、環境変数などは公開対象に含めない前提です。これらは運用環境ごとに安全に管理してください。
+
+ASTRA は画像内の顔を検出し、登録済みの特徴量と照合するための技術検証および運用支援ツールです。顔特徴量は元画像そのものではありませんが、人物の識別に関わる情報であるため、慎重に取り扱う必要があります。公開リポジトリに実データを含めないこと、バックアップやログの扱いに注意すること、利用者や協力者の権限を適切に管理することを推奨します。
+
+また、本プロジェクトは非公式の独立したソフトウェアです。特定の団体、事務所、権利者、公式サービスによる承認、提携、運営を意味するものではありません。名称、画像、人物情報、外部データを利用する場合は、利用者自身の責任で権利、利用条件、プライバシー、公開範囲を確認してください。
+
+### English
+
+ASTRA is open-source software released under the Apache License 2.0. You may use, copy, modify, redistribute, and create derivative works within the terms of that license. See the `LICENSE` file in this repository for the full license text.
+
+This repository contains the application code, recognition and training workflows, UI, API, and files required for the sample structure. Runtime-generated face descriptors, statistics, access-control data, uploaded images, authentication settings, database connection settings, private keys, environment variables, and other secrets are intentionally not meant to be published with the repository. They should be managed securely in each deployment environment.
+
+ASTRA is a technical and operational tool for detecting faces in images and comparing them with registered descriptors. Face descriptors are not original images, but they are still derived from facial data and should be handled carefully. Do not commit real operational descriptors to a public repository, review backups and logs, and keep user permissions limited to the people who actually need access.
+
+This project is unofficial and independent. It is not endorsed, affiliated with, operated by, or approved by any specific organization, agency, rights holder, or official service. When using names, images, person-related information, or external data sources, users are responsible for confirming the applicable rights, terms of use, privacy considerations, and publication scope.
