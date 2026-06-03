@@ -2,9 +2,6 @@
 declare(strict_types=1);
 
 header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Referrer-Policy: same-origin');
-header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
 
 $baseDir = __DIR__;
 $dataDir = $baseDir . '/data';
@@ -41,8 +38,7 @@ try {
         default => send_json(['error' => 'unknown action'], 404),
     };
 } catch (Throwable $e) {
-    error_log('ASTRA API error: ' . $e->getMessage());
-    send_json(['error' => 'internal server error'], 500);
+    send_json(['error' => $e->getMessage()], 500);
 }
 
 function read_json(string $path): array {
@@ -91,23 +87,8 @@ function mutate_json_locked(string $path, callable $mutator): array {
 function send_json(array $data, int $status = 200): never {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: no-store');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
-}
-
-function require_method(string $method): void {
-    if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== strtoupper($method)) {
-        send_json(['error' => 'method not allowed'], 405);
-    }
-}
-
-function read_json_body(int $maxBytes = 65536): array {
-    $raw = file_get_contents('php://input', false, null, 0, $maxBytes + 1);
-    if ($raw === false || strlen($raw) > $maxBytes) send_json(['error' => 'payload too large'], 413);
-    $payload = json_decode($raw ?: '{}', true);
-    if (!is_array($payload)) send_json(['error' => 'invalid json'], 400);
-    return $payload;
 }
 
 function build_stats(string $descriptorFile): array {
@@ -192,8 +173,8 @@ function is_sort_allowed(array $user, string $sortAccessFile): bool {
 }
 
 function save_descriptor(string $descriptorFile, string $statsFile, string $uploadDir): never {
-    require_method('POST');
-    $payload = read_json_body();
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['error' => 'invalid json'], 400);
     enforce_save_auth($payload);
 
     $member = trim((string)($payload['member'] ?? ''));
@@ -294,8 +275,8 @@ function clear_auth_cookie(): void {
 }
 
 function auth_login(): never {
-    require_method('POST');
-    $payload = read_json_body(16384);
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
     $username = trim((string)($payload['username'] ?? ''));
     $password = (string)($payload['password'] ?? '');
     if ($username === '' || $password === '') {
@@ -317,6 +298,7 @@ function auth_login(): never {
         ->execute([$token, $user['id'], $expires]);
     set_auth_cookie($token);
     send_json(['ok' => true, 'data' => [
+        'token' => $token,
         'user' => [
             'id' => (int)$user['id'],
             'username' => (string)$user['username'],
@@ -326,7 +308,6 @@ function auth_login(): never {
 }
 
 function auth_logout(): never {
-    require_method('POST');
     $token = auth_token();
     if ($token) auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE token = ?')->execute([$token]);
     clear_auth_cookie();
@@ -368,8 +349,8 @@ function sort_access_list(string $sortAccessFile): never {
 
 function sort_access_mode(string $sortAccessFile): never {
     require_admin_user();
-    require_method('POST');
-    $payload = read_json_body(8192);
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
     $mode = ((string)($payload['mode'] ?? 'limited') === 'all') ? 'all' : 'limited';
     mutate_json_locked($sortAccessFile, static function (array $data) use ($mode): array {
         $access = normalize_sort_access($data);
@@ -388,8 +369,8 @@ function fetch_auth_user_by_id(int $userId): ?array {
 
 function sort_access_save(string $sortAccessFile): never {
     require_admin_user();
-    require_method('POST');
-    $payload = read_json_body(8192);
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
     $userId = (int)($payload['user_id'] ?? 0);
     $status = ((string)($payload['status'] ?? 'active') === 'paused') ? 'paused' : 'active';
     if ($userId <= 0) send_json(['ok' => false, 'error' => 'Buddies profile IDを入力してください。'], 400);
@@ -417,8 +398,8 @@ function sort_access_save(string $sortAccessFile): never {
 
 function sort_access_delete(string $sortAccessFile): never {
     require_admin_user();
-    require_method('POST');
-    $payload = read_json_body(8192);
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
     $userId = (int)($payload['user_id'] ?? 0);
     if ($userId <= 0) send_json(['ok' => false, 'error' => 'Buddies profile IDを指定してください。'], 400);
 
@@ -444,9 +425,8 @@ function enforce_save_auth(array $payload): void {
 }
 
 function delete_descriptors(string $descriptorFile, string $statsFile, string $uploadDir): never {
-    require_method('POST');
-    require_admin_user();
-    $payload = read_json_body();
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['error' => 'invalid json'], 400);
     $ids = $payload['ids'] ?? [];
     if (!is_array($ids) || !$ids) send_json(['error' => 'ids are required'], 400);
     $ids = array_values(array_filter(array_map('strval', $ids)));
@@ -484,11 +464,26 @@ function cleanup_uploads(string $uploadDir): void {
 
 function proxy_image(): never {
     $url = trim((string)($_GET['url'] ?? ''));
-    if ($url === '' || strlen($url) > 2048 || !filter_var($url, FILTER_VALIDATE_URL)) {
+    if ($url === '' || !filter_var($url, FILTER_VALIDATE_URL)) {
         http_response_code(400);
         exit('invalid url');
     }
-    $bytes = fetch_remote_image_bytes($url);
+    $parts = parse_url($url);
+    $scheme = strtolower((string)($parts['scheme'] ?? ''));
+    if (!in_array($scheme, ['https', 'http'], true)) {
+        http_response_code(400);
+        exit('invalid scheme');
+    }
+
+    $ctx = stream_context_create([
+        'http' => [
+            'timeout' => 10,
+            'follow_location' => 1,
+            'max_redirects' => 3,
+            'header' => "User-Agent: ASTRA/1.0\r\n",
+        ],
+    ]);
+    $bytes = @file_get_contents($url, false, $ctx, 0, 8 * 1024 * 1024 + 1);
     if ($bytes === false || strlen($bytes) === 0 || strlen($bytes) > 8 * 1024 * 1024) {
         http_response_code(502);
         exit('failed to fetch image');
@@ -502,86 +497,4 @@ function proxy_image(): never {
     header('Cache-Control: private, max-age=3600');
     echo $bytes;
     exit;
-}
-
-function fetch_remote_image_bytes(string $url, int $redirects = 3): string|false {
-    validate_proxy_url($url);
-    $ctx = stream_context_create([
-        'http' => [
-            'timeout' => 10,
-            'follow_location' => 0,
-            'ignore_errors' => true,
-            'header' => "User-Agent: ASTRA/1.0\r\n",
-        ],
-    ]);
-    $bytes = @file_get_contents($url, false, $ctx, 0, 8 * 1024 * 1024 + 1);
-    $headers = $GLOBALS['http_response_header'] ?? [];
-    $status = proxy_status_code($headers);
-    if ($status >= 300 && $status < 400 && $redirects > 0) {
-        $location = proxy_header_value($headers, 'location');
-        if (!$location) return false;
-        return fetch_remote_image_bytes(resolve_proxy_url($url, $location), $redirects - 1);
-    }
-    if ($status < 200 || $status >= 300) return false;
-    return $bytes;
-}
-
-function validate_proxy_url(string $url): void {
-    $parts = parse_url($url);
-    $scheme = strtolower((string)($parts['scheme'] ?? ''));
-    $host = (string)($parts['host'] ?? '');
-    if (!in_array($scheme, ['https', 'http'], true) || $host === '') {
-        http_response_code(400);
-        exit('invalid url');
-    }
-    if (!proxy_host_is_public($host)) {
-        http_response_code(400);
-        exit('blocked host');
-    }
-}
-
-function proxy_host_is_public(string $host): bool {
-    $host = trim($host, '[]');
-    if (filter_var($host, FILTER_VALIDATE_IP)) return proxy_ip_is_public($host);
-    $records = array_merge(
-        dns_get_record($host, DNS_A) ?: [],
-        dns_get_record($host, DNS_AAAA) ?: []
-    );
-    if (!$records) return false;
-    foreach ($records as $record) {
-        $ip = $record['ip'] ?? $record['ipv6'] ?? null;
-        if (!$ip || !proxy_ip_is_public($ip)) return false;
-    }
-    return true;
-}
-
-function proxy_ip_is_public(string $ip): bool {
-    return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
-}
-
-function proxy_status_code(array $headers): int {
-    foreach ($headers as $header) {
-        if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $m)) return (int)$m[1];
-    }
-    return 0;
-}
-
-function proxy_header_value(array $headers, string $name): string {
-    foreach ($headers as $header) {
-        if (stripos($header, $name . ':') === 0) return trim(substr($header, strlen($name) + 1));
-    }
-    return '';
-}
-
-function resolve_proxy_url(string $base, string $location): string {
-    if (filter_var($location, FILTER_VALIDATE_URL)) return $location;
-    $parts = parse_url($base);
-    $scheme = $parts['scheme'] ?? 'https';
-    $host = $parts['host'] ?? '';
-    $port = isset($parts['port']) ? ':' . $parts['port'] : '';
-    if (str_starts_with($location, '//')) return $scheme . ':' . $location;
-    if (str_starts_with($location, '/')) return $scheme . '://' . $host . $port . $location;
-    $path = $parts['path'] ?? '/';
-    $dir = rtrim(str_replace('\\', '/', dirname($path)), '/');
-    return $scheme . '://' . $host . $port . ($dir ? $dir . '/' : '/') . $location;
 }
