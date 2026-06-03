@@ -130,6 +130,10 @@
       <button class="icon-button" type="button" onclick="closeSortAccessModal()"><i class="fas fa-xmark"></i></button>
     </div>
     <div class="access-manager">
+      <div class="seg" role="tablist" aria-label="Sort権限モード">
+        <button type="button" id="sort-access-mode-limited" onclick="setSortAccessMode('limited')">個別許可</button>
+        <button type="button" id="sort-access-mode-all" onclick="setSortAccessMode('all')">全員に解放</button>
+      </div>
       <div class="grid two">
         <input class="field" id="sort-access-user-id" type="number" inputmode="numeric" min="1" placeholder="Buddies profile ID">
         <button class="button primary" type="button" id="sort-access-add-btn" onclick="saveSortAccessUser('active')">追加</button>
@@ -146,6 +150,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 <script src="./matcher.js"></script>
-<script src="./train.js?v=20260603-sort-access-admin-only"></script>
+<script src="./train.js?v=20260603-sort-access-mode"></script>
 </body>
 </html>

@@ -27,6 +27,7 @@ try {
         'auth_logout' => auth_logout(),
         'sort_access_me' => sort_access_me($sortAccessFile),
         'sort_access_list' => sort_access_list($sortAccessFile),
+        'sort_access_mode' => sort_access_mode($sortAccessFile),
         'sort_access_save' => sort_access_save($sortAccessFile),
         'sort_access_delete' => sort_access_delete($sortAccessFile),
         'descriptors' => send_json(read_json($descriptorFile)),
@@ -114,6 +115,7 @@ function build_stats_from_data(array $data): array {
 
 function default_sort_access(): array {
     return [
+        'mode' => 'limited',
         'users' => [
             '1' => [
                 'user_id' => 1,
@@ -128,6 +130,7 @@ function default_sort_access(): array {
 }
 
 function normalize_sort_access(array $data): array {
+    $mode = ((string)($data['mode'] ?? 'limited') === 'all') ? 'all' : 'limited';
     $users = $data['users'] ?? [];
     if (!is_array($users)) $users = [];
     $next = [];
@@ -145,17 +148,26 @@ function normalize_sort_access(array $data): array {
         ];
     }
     ksort($next, SORT_NATURAL);
-    return ['users' => $next];
+    return ['mode' => $mode, 'users' => $next];
 }
 
 function sort_access_rows(string $sortAccessFile): array {
     return array_values(normalize_sort_access(read_json($sortAccessFile))['users']);
 }
 
+function sort_access_state(string $sortAccessFile): array {
+    $access = normalize_sort_access(read_json($sortAccessFile));
+    return [
+        'mode' => $access['mode'],
+        'users' => array_values($access['users']),
+    ];
+}
+
 function is_sort_allowed(array $user, string $sortAccessFile): bool {
     $id = (string)(int)($user['id'] ?? 0);
     if ($id === '0') return false;
     $access = normalize_sort_access(read_json($sortAccessFile));
+    if (($access['mode'] ?? 'limited') === 'all') return true;
     $row = $access['users'][$id] ?? null;
     return is_array($row) && ($row['status'] ?? '') === 'active';
 }
@@ -332,7 +344,20 @@ function sort_access_me(string $sortAccessFile): never {
 
 function sort_access_list(string $sortAccessFile): never {
     require_admin_user();
-    send_json(['ok' => true, 'data' => sort_access_rows($sortAccessFile)]);
+    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
+}
+
+function sort_access_mode(string $sortAccessFile): never {
+    require_admin_user();
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
+    $mode = ((string)($payload['mode'] ?? 'limited') === 'all') ? 'all' : 'limited';
+    mutate_json_locked($sortAccessFile, static function (array $data) use ($mode): array {
+        $access = normalize_sort_access($data);
+        $access['mode'] = $mode;
+        return $access;
+    });
+    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
 }
 
 function fetch_auth_user_by_id(int $userId): ?array {
@@ -368,7 +393,7 @@ function sort_access_save(string $sortAccessFile): never {
         ];
         return $access;
     });
-    send_json(['ok' => true, 'data' => sort_access_rows($sortAccessFile)]);
+    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
 }
 
 function sort_access_delete(string $sortAccessFile): never {
@@ -383,7 +408,7 @@ function sort_access_delete(string $sortAccessFile): never {
         unset($access['users'][(string)$userId]);
         return $access;
     });
-    send_json(['ok' => true, 'data' => sort_access_rows($sortAccessFile)]);
+    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
 }
 
 function enforce_save_auth(array $payload): void {
