@@ -1,3 +1,32 @@
 .DS_Store
+
+# Local environment and server configuration
+.env
+.env.*
+*.local
+*.local.*
+config.php
+local.config.php
+
+# Secrets and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Runtime uploads
 uploads/train/*
 !uploads/train/.gitkeep
+
+# Runtime generated data
+data/descriptors.json
+data/stats.json
+data/sort_access.json
+!data/*.example.json
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
