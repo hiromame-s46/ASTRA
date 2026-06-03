@@ -4,23 +4,27 @@
 
 **ASTRA** は **Adaptive Sakurazaka Technology Recognition Architecture** の略称です。
 
+名前の由来はそのままに、ASTRA は特定のコミュニティだけに閉じない、小規模コミュニティ向けの顔認識・学習データ整理OSSとして設計されています。
+
 ## 概要 日本語
 
-ASTRAは、櫻坂46メンバーの画像認識を目的として設計した、ブラウザベースの顔認識・学習支援アーキテクチャです。画像内の顔を検出し、収集済みの顔特徴量データと照合して、顔ごとにメンバー候補を表示します。
+ASTRAは、小規模コミュニティ向けに設計した、ブラウザベースの顔認識・学習データ整理OSSです。画像内の顔を検出し、収集済みの顔特徴量データと照合して、顔ごとに人物候補を表示します。
 
-主な用途は、画像からのメンバー推定、複数人画像の顔ごとの判定、顔特徴量データの登録、ブログ画像を使った学習データ整理です。判定画面はシンプルに画像を選んで結果を見る構成にし、学習画面と仕分け画面ではデータ収集を効率化するための操作に集中できるようにしています。
+主な用途は、画像からの人物推定、複数人画像の顔ごとの判定、顔特徴量データの登録、コミュニティ内で共有される画像を使った学習データ整理です。判定画面はシンプルに画像を選んで結果を見る構成にし、学習画面と仕分け画面ではデータ収集を効率化するための操作に集中できるようにしています。
 
-ASTRAは、顔認識モデル、照合ロジック、収集データ、学習統計、API、UI、ブランドアセットを1つの独立したプロジェクトとしてまとめています。一方で、メンバー情報やブログ画像一覧のようなマスターデータはASTRA内に複製せず、共有の `../data` ディレクトリを参照します。これにより、ASTRAはAI判定と学習データ管理に専念できます。
+ASTRAは、顔認識モデル、照合ロジック、収集データ、学習統計、API、UI、ブランドアセットを1つの独立したプロジェクトとしてまとめています。一方で、人物情報や画像一覧のようなマスターデータはASTRA内に複製せず、共有の `../data` ディレクトリを参照します。これにより、ASTRAはAI判定と学習データ管理に専念できます。
 
 ## Overview English
 
 **ASTRA** stands for **Adaptive Sakurazaka Technology Recognition Architecture**.
 
-ASTRA is a browser-based face recognition and training-support architecture designed for recognizing Sakurazaka46 members. It detects faces in images, compares each detected face against collected facial descriptor data, and displays member candidates for each face.
+The original acronym is preserved, while ASTRA is written and structured as open-source software for browser-based face recognition and training-data organization in small communities.
 
-Its core use cases are member recognition from images, per-face recognition in multi-person images, facial descriptor registration, and training-data organization using blog images. The recognition page is intentionally simple: choose images and review the results. The training and sorting pages focus on efficient data collection and correction workflows.
+ASTRA is a browser-based face recognition and training-data organization OSS designed for small communities. It detects faces in images, compares each detected face against collected facial descriptor data, and displays person candidates for each face.
 
-ASTRA is organized as an independent project containing the recognition model flow, matching logic, collected training data, statistics, API, UI, and brand assets. Member profiles and blog image master data are not duplicated inside ASTRA; they are loaded from the shared `../data` directory. This keeps ASTRA focused on AI recognition and training-data management.
+Its core use cases are person recognition from images, per-face recognition in multi-person images, facial descriptor registration, and training-data organization using community image sources. The recognition page is intentionally simple: choose images and review the results. The training and sorting pages focus on efficient data collection and correction workflows.
+
+ASTRA is organized as an independent project containing the recognition model flow, matching logic, collected training data, statistics, API, UI, and brand assets. Person profiles and image master data are not duplicated inside ASTRA; they are loaded from the shared `../data` directory. This keeps ASTRA focused on AI recognition and training-data management.
 
 ## 詳細 日本語
 
