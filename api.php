@@ -9,6 +9,7 @@ $uploadDir = $baseDir . '/uploads/train';
 $descriptorFile = $dataDir . '/descriptors.json';
 $statsFile = $dataDir . '/stats.json';
 $sortAccessFile = $dataDir . '/sort_access.json';
+$imageAccessFile = $dataDir . '/image_access.json';
 const ADMIN_USER_ID = 1;
 
 if (!is_dir($dataDir)) mkdir($dataDir, 0775, true);
@@ -16,6 +17,7 @@ if (!is_dir($uploadDir)) mkdir($uploadDir, 0775, true);
 if (!file_exists($descriptorFile)) file_put_contents($descriptorFile, "{}\n");
 if (!file_exists($statsFile)) file_put_contents($statsFile, "{}\n");
 if (!file_exists($sortAccessFile)) write_json_locked($sortAccessFile, default_sort_access());
+if (!file_exists($imageAccessFile)) write_json_locked($imageAccessFile, default_sort_access());
 cleanup_uploads($uploadDir);
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
@@ -30,6 +32,11 @@ try {
         'sort_access_mode' => sort_access_mode($sortAccessFile),
         'sort_access_save' => sort_access_save($sortAccessFile),
         'sort_access_delete' => sort_access_delete($sortAccessFile),
+        'image_access_me' => image_access_me($imageAccessFile),
+        'image_access_list' => image_access_list($imageAccessFile),
+        'image_access_mode' => image_access_mode($imageAccessFile),
+        'image_access_save' => image_access_save($imageAccessFile),
+        'image_access_delete' => image_access_delete($imageAccessFile),
         'descriptors' => send_json(read_json($descriptorFile)),
         'stats' => send_json(build_stats($descriptorFile)),
         'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir),
@@ -432,16 +439,45 @@ function sort_access_delete(string $sortAccessFile): never {
     send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
 }
 
+function image_access_me(string $imageAccessFile): never {
+    $user = current_auth_user();
+    if (!$user) send_json(['ok' => true, 'data' => ['user' => null, 'allowed' => false]]);
+    send_json(['ok' => true, 'data' => [
+        'user' => $user,
+        'allowed' => (int)$user['id'] === ADMIN_USER_ID || is_sort_allowed($user, $imageAccessFile),
+    ]]);
+}
+
+function image_access_list(string $imageAccessFile): never {
+    sort_access_list($imageAccessFile);
+}
+
+function image_access_mode(string $imageAccessFile): never {
+    sort_access_mode($imageAccessFile);
+}
+
+function image_access_save(string $imageAccessFile): never {
+    sort_access_save($imageAccessFile);
+}
+
+function image_access_delete(string $imageAccessFile): never {
+    sort_access_delete($imageAccessFile);
+}
+
 function enforce_save_auth(array $payload): void {
     $user = current_auth_user();
     if (!$user) send_json(['error' => 'login required'], 401);
     $source = trim((string)($payload['source'] ?? ''));
-    global $sortAccessFile;
-    if (in_array($source, ['sort', 'image'], true)) {
+    global $sortAccessFile, $imageAccessFile;
+    if ((int)$user['id'] === ADMIN_USER_ID) return;
+    if ($source === 'sort') {
         if (is_sort_allowed($user, $sortAccessFile)) return;
         send_json(['error' => 'sort access denied'], 403);
     }
-    if ((int)$user['id'] === ADMIN_USER_ID) return;
+    if ($source === 'image') {
+        if (is_sort_allowed($user, $imageAccessFile)) return;
+        send_json(['error' => 'image access denied'], 403);
+    }
     send_json(['error' => 'admin only'], 403);
 }
 

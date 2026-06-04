@@ -2,7 +2,7 @@
 
 ![ASTRA logo](assets/astra-logo.png)
 
-**ASTRA** は **Adaptive Sakurazaka Technology Recognition Architecture** の略称です。
+**ASTRA** は **Adaptive Sakura Technology Recognition Architecture** の略称です。
 
 名前の由来はそのままに、ASTRA は特定のコミュニティだけに閉じない、小規模コミュニティ向けの顔認識・学習データ整理OSSとして設計されています。
 
@@ -16,7 +16,7 @@ ASTRAは、顔認識モデル、照合ロジック、収集データ、学習統
 
 ## Overview English
 
-**ASTRA** stands for **Adaptive Sakurazaka Technology Recognition Architecture**.
+**ASTRA** stands for **Adaptive Sakura Technology Recognition Architecture**.
 
 The original acronym is preserved, while ASTRA is written and structured as open-source software for browser-based face recognition and training-data organization in small communities.
 
