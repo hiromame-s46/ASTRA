@@ -437,7 +437,7 @@ function enforce_save_auth(array $payload): void {
     if (!$user) send_json(['error' => 'login required'], 401);
     $source = trim((string)($payload['source'] ?? ''));
     global $sortAccessFile;
-    if ($source === 'sort') {
+    if (in_array($source, ['sort', 'image'], true)) {
         if (is_sort_allowed($user, $sortAccessFile)) return;
         send_json(['error' => 'sort access denied'], 403);
     }

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<title>画像学習 - ASTRA</title>
+<link rel="apple-touch-icon" sizes="180x180" href="./icon/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./icon/favicon-16x16.png">
+<link rel="shortcut icon" href="./icon/favicon.ico">
+<link rel="manifest" href="./icon/site.webmanifest">
+<meta name="theme-color" content="#ffffff">
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body data-train-mode="upload">
+<header class="astra-header">
+  <a class="astra-brand" href="./" aria-label="ASTRA home">
+    <img src="./assets/astra-header-icon.png" alt="ASTRA">
+    <span><strong>ASTRA</strong></span>
+  </a>
+</header>
+<main class="wrap sort-wrap">
+  <section class="hero">
+    <p class="eyebrow"><i class="fas fa-image"></i> Train Image</p>
+    <h1>画像から学習データを登録</h1>
+    <p class="lead">手元の画像から顔を検出し、顔ごとにメンバーを指定してASTRAの学習データに登録します。画像ファイル自体は保存しません。</p>
+  </section>
+
+  <section class="panel">
+    <label class="toggle-row">
+      <input type="checkbox" id="efficient-mode-toggle" checked>
+      <span>効率学習モード</span>
+    </label>
+    <p class="status" id="status">モデルを読み込み中...</p>
+    <label class="file-drop">
+      <input type="file" id="upload-input" accept="image/*" multiple>
+      <span><i class="fas fa-images"></i> 学習画像を選択</span>
+    </label>
+    <div class="blog-card" id="blog-info"></div>
+  </section>
+
+  <section class="panel hidden" id="image-panel">
+    <div class="preview" id="preview">
+      <img id="train-image" alt="">
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="face-list" id="face-list"></div>
+    <div class="mobile-save-bar">
+      <div class="save-summary" id="save-summary">登録する顔を設定してください。</div>
+    </div>
+  </section>
+</main>
+<div class="blog-bottom-bar sort-bottom-bar">
+  <button class="button" id="undo-bottom-btn" type="button" onclick="goBackImage()" disabled>戻る</button>
+  <button class="button primary" id="save-bottom-btn" type="button" onclick="handlePrimaryAction()" disabled>登録</button>
+  <button class="button" type="button" onclick="skipImage()">次へ</button>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+<script src="./matcher.js"></script>
+<script src="./train-image.js?v=20260604-image-train"></script>
+</body>
+</html>
