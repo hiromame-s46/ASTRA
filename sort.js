@@ -228,7 +228,7 @@ async function loadImageQueue(){
   const olderBlogs = weightedSample(sortedBlogs.slice(RECENT_BLOG_KEEP), OLDER_BLOG_SAMPLE, getBlogTrainingWeight);
   const targetBlogs = buildPrioritizedBlogList([...recentBlogs, ...olderBlogs]);
 
-  imageQueue = targetBlogs.flatMap((blog, blogOrder) => {
+  imageQueue = spreadImageQueue(targetBlogs.flatMap((blog, blogOrder) => {
     const images = Array.isArray(blog.images) && blog.images.length ? blog.images : (blog.thumb ? [blog.thumb] : []);
     return shuffle(images.map((url, imageOrder) => ({
       ...blog,
@@ -237,7 +237,7 @@ async function loadImageQueue(){
       image_url: url,
       imageCount: images.length
     })));
-  });
+  }));
 }
 
 function getBlogTrainingWeight(blog){
@@ -297,6 +297,32 @@ function takeNextBlog(queue, previousMember){
   const index = queue.findIndex(blog => blog.member !== previousMember);
   if(index <= 0) return queue.shift();
   return queue.splice(index, 1)[0];
+}
+
+function spreadImageQueue(images){
+  const pool = images.slice();
+  const result = [];
+  while(pool.length){
+    const last = result[result.length - 1] || null;
+    const index = pickImageQueueIndex(pool, last);
+    result.push(pool.splice(index, 1)[0]);
+  }
+  return result;
+}
+
+function pickImageQueueIndex(pool, last){
+  if(!last) return 0;
+  const differentBlogAndMember = pool.findIndex(item => imageBlogKey(item) !== imageBlogKey(last) && item.member !== last.member);
+  if(differentBlogAndMember >= 0) return differentBlogAndMember;
+  const differentBlog = pool.findIndex(item => imageBlogKey(item) !== imageBlogKey(last));
+  if(differentBlog >= 0) return differentBlog;
+  const differentMember = pool.findIndex(item => item.member !== last.member);
+  if(differentMember >= 0) return differentMember;
+  return 0;
+}
+
+function imageBlogKey(item){
+  return item?.link || `${item?.member || ''}:${item?.date || ''}:${item?.title || ''}`;
 }
 
 function weightedSample(items, count, weightFn){
