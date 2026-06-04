@@ -4,8 +4,6 @@
 
 **ASTRA** は **Adaptive Scalable Training Recognition Architecture** の略称です。
 
-名前の由来はそのままに、ASTRA は特定のコミュニティだけに閉じない、小規模コミュニティ向けの顔認識・学習データ整理OSSとして設計されています。
-
 ## 概要 日本語
 
 ASTRAは、小規模コミュニティ向けに設計した、ブラウザベースの顔認識・学習データ整理OSSです。画像内の顔を検出し、収集済みの顔特徴量データと照合して、顔ごとに人物候補を表示します。
@@ -17,8 +15,6 @@ ASTRAは、顔認識モデル、照合ロジック、収集データ、学習統
 ## Overview English
 
 **ASTRA** stands for **Adaptive Scalable Training Recognition Architecture**.
-
-The original acronym is preserved, while ASTRA is written and structured as open-source software for browser-based face recognition and training-data organization in small communities.
 
 ASTRA is a browser-based face recognition and training-data organization OSS designed for small communities. It detects faces in images, compares each detected face against collected facial descriptor data, and displays person candidates for each face.
 
