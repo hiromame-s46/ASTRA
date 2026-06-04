@@ -33,6 +33,7 @@ let isSaving = false;
 let efficientMode = true;
 let authUser = null;
 let sortAccessMode = 'limited';
+let imageAccessMode = 'limited';
 
 const statusEl = document.getElementById('status');
 const efficientModeToggle = document.getElementById('efficient-mode-toggle');
@@ -55,6 +56,14 @@ const sortAccessAddBtn = document.getElementById('sort-access-add-btn');
 const sortAccessOpenBtn = document.getElementById('sort-access-open-btn');
 const sortAccessModeLimited = document.getElementById('sort-access-mode-limited');
 const sortAccessModeAll = document.getElementById('sort-access-mode-all');
+const imageAccessModal = document.getElementById('image-access-modal');
+const imageAccessList = document.getElementById('image-access-list');
+const imageAccessStatus = document.getElementById('image-access-status');
+const imageAccessUserId = document.getElementById('image-access-user-id');
+const imageAccessAddBtn = document.getElementById('image-access-add-btn');
+const imageAccessOpenBtn = document.getElementById('image-access-open-btn');
+const imageAccessModeLimited = document.getElementById('image-access-mode-limited');
+const imageAccessModeAll = document.getElementById('image-access-mode-all');
 const undoBtn = document.getElementById('undo-btn');
 const undoBottomBtn = document.getElementById('undo-bottom-btn');
 const saveBottomBtn = document.getElementById('save-bottom-btn');
@@ -103,7 +112,9 @@ async function init(){
 }
 
 function updateSortAccessVisibility(){
-  sortAccessOpenBtn?.classList.toggle('hidden', Number(authUser?.id) !== 1);
+  const hidden = Number(authUser?.id) !== 1;
+  sortAccessOpenBtn?.classList.toggle('hidden', hidden);
+  imageAccessOpenBtn?.classList.toggle('hidden', hidden);
 }
 
 async function ensurePageAccess({adminOnly=false}={}){
@@ -433,7 +444,7 @@ function renderSortAccessUsers(rows){
 async function saveSortAccessUser(status='active', userId=null){
   const id = Number(userId || sortAccessUserId?.value || 0);
   if(!id){
-    if(sortAccessStatus) sortAccessStatus.textContent = 'Buddies profile IDを入力してください。';
+    if(sortAccessStatus) sortAccessStatus.textContent = 'ユーザーIDを入力してください。';
     return;
   }
   if(sortAccessAddBtn) sortAccessAddBtn.disabled = true;
@@ -471,6 +482,140 @@ async function deleteSortAccessUser(userId){
     applySortAccessState(json.data || {});
   }catch(e){
     if(sortAccessStatus) sortAccessStatus.textContent = e.message || '削除できませんでした。';
+  }
+}
+
+async function openImageAccessModal(){
+  if(Number(authUser?.id) !== 1) return;
+  imageAccessModal?.classList.remove('hidden');
+  await loadImageAccessUsers();
+}
+
+function closeImageAccessModal(event){
+  if(event && event.target !== imageAccessModal) return;
+  imageAccessModal?.classList.add('hidden');
+}
+
+async function loadImageAccessUsers(){
+  if(!imageAccessList || !imageAccessStatus) return;
+  imageAccessStatus.textContent = '許可ユーザーを読み込み中...';
+  imageAccessList.innerHTML = '';
+  try{
+    const res = await fetch('./api.php?action=image_access_list', {credentials:'include', cache:'no-store'});
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '許可ユーザーを読み込めませんでした。');
+    applyImageAccessState(json.data || {});
+  }catch(e){
+    imageAccessStatus.textContent = e.message || '許可ユーザーを読み込めませんでした。';
+    imageAccessList.innerHTML = '';
+  }
+}
+
+function applyImageAccessState(state){
+  const rows = Array.isArray(state) ? state : (state.users || []);
+  imageAccessMode = state.mode === 'all' ? 'all' : 'limited';
+  updateImageAccessModeUI();
+  renderImageAccessUsers(rows);
+  if(imageAccessStatus){
+    imageAccessStatus.textContent = imageAccessMode === 'all'
+      ? `全員に解放中 / 個別リスト ${rows.length}人`
+      : `${rows.length}人を個別許可中`;
+  }
+}
+
+function updateImageAccessModeUI(){
+  imageAccessModeLimited?.classList.toggle('active', imageAccessMode === 'limited');
+  imageAccessModeAll?.classList.toggle('active', imageAccessMode === 'all');
+  if(imageAccessAddBtn){
+    imageAccessAddBtn.disabled = false;
+    imageAccessAddBtn.textContent = '追加';
+  }
+}
+
+async function setImageAccessMode(mode){
+  if(Number(authUser?.id) !== 1) return;
+  const nextMode = mode === 'all' ? 'all' : 'limited';
+  if(imageAccessStatus) imageAccessStatus.textContent = '切り替え中...';
+  try{
+    const res = await fetch('./api.php?action=image_access_mode', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:nextMode})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '切り替えできませんでした。');
+    applyImageAccessState(json.data || {});
+  }catch(e){
+    if(imageAccessStatus) imageAccessStatus.textContent = e.message || '切り替えできませんでした。';
+  }
+}
+
+function renderImageAccessUsers(rows){
+  if(!imageAccessList) return;
+  if(!rows.length){
+    imageAccessList.innerHTML = '<div class="empty-result">許可ユーザーがありません。</div>';
+    return;
+  }
+  imageAccessList.innerHTML = rows.map(row => {
+    const active = row.status !== 'paused';
+    const label = active ? '有効' : '停止中';
+    const nextStatus = active ? 'paused' : 'active';
+    const nextLabel = active ? '一時停止' : '再開';
+    return `<div class="access-user-row">
+      <div>
+        <div class="access-user-name">${escapeHtml(row.display_name || row.username || `ID ${row.user_id}`)}<span class="access-status ${active ? 'active' : 'paused'}">${label}</span></div>
+        <div class="access-user-meta">ID ${escapeHtml(row.user_id)} / ${escapeHtml(row.username || '-')}</div>
+      </div>
+      <div class="access-user-actions">
+        <button class="button soft" type="button" onclick="saveImageAccessUser('${nextStatus}', ${Number(row.user_id)})">${nextLabel}</button>
+        <button class="button" type="button" onclick="deleteImageAccessUser(${Number(row.user_id)})">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function saveImageAccessUser(status='active', userId=null){
+  const id = Number(userId || imageAccessUserId?.value || 0);
+  if(!id){
+    if(imageAccessStatus) imageAccessStatus.textContent = 'ユーザーIDを入力してください。';
+    return;
+  }
+  if(imageAccessAddBtn) imageAccessAddBtn.disabled = true;
+  if(imageAccessStatus) imageAccessStatus.textContent = '保存中...';
+  try{
+    const res = await fetch('./api.php?action=image_access_save', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:id, status})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '保存できませんでした。');
+    if(imageAccessUserId && !userId) imageAccessUserId.value = '';
+    applyImageAccessState(json.data || {});
+  }catch(e){
+    if(imageAccessStatus) imageAccessStatus.textContent = e.message || '保存できませんでした。';
+  }finally{
+    if(imageAccessAddBtn) imageAccessAddBtn.disabled = false;
+  }
+}
+
+async function deleteImageAccessUser(userId){
+  if(!userId) return;
+  if(imageAccessStatus) imageAccessStatus.textContent = '削除中...';
+  try{
+    const res = await fetch('./api.php?action=image_access_delete', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:userId})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '削除できませんでした。');
+    applyImageAccessState(json.data || {});
+  }catch(e){
+    if(imageAccessStatus) imageAccessStatus.textContent = e.message || '削除できませんでした。';
   }
 }
 

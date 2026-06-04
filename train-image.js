@@ -43,7 +43,6 @@ let isSaving = false;
 let efficientMode = true;
 let authUser = null;
 let currentObjectUrl = '';
-let imageAccessMode = 'limited';
 
 const statusEl = document.getElementById('status');
 const efficientModeToggle = document.getElementById('efficient-mode-toggle');
@@ -56,14 +55,6 @@ const saveSummary = document.getElementById('save-summary');
 const blogInfo = document.getElementById('blog-info');
 const undoBottomBtn = document.getElementById('undo-bottom-btn');
 const saveBottomBtn = document.getElementById('save-bottom-btn');
-const imageAccessModal = document.getElementById('image-access-modal');
-const imageAccessList = document.getElementById('image-access-list');
-const imageAccessStatus = document.getElementById('image-access-status');
-const imageAccessUserId = document.getElementById('image-access-user-id');
-const imageAccessAddBtn = document.getElementById('image-access-add-btn');
-const imageAccessOpenBtn = document.getElementById('image-access-open-btn');
-const imageAccessModeLimited = document.getElementById('image-access-mode-limited');
-const imageAccessModeAll = document.getElementById('image-access-mode-all');
 
 init();
 
@@ -126,7 +117,6 @@ async function ensurePageAccess(){
       showAccessMessage('画像学習権限がありません。', '管理者に画像学習の利用許可を依頼してください。');
       return null;
     }
-    imageAccessOpenBtn?.classList.toggle('hidden', Number(user.id) !== 1);
     return user;
   }catch(e){
     console.error(e);
@@ -186,140 +176,6 @@ async function readJsonResponse(res){
     return await res.json();
   }catch(e){
     return {ok:false, error:'ログイン処理でエラーが発生しました。時間をおいて再度お試しください。'};
-  }
-}
-
-async function openImageAccessModal(){
-  if(Number(authUser?.id) !== 1) return;
-  imageAccessModal?.classList.remove('hidden');
-  await loadImageAccessUsers();
-}
-
-function closeImageAccessModal(event){
-  if(event && event.target !== imageAccessModal) return;
-  imageAccessModal?.classList.add('hidden');
-}
-
-async function loadImageAccessUsers(){
-  if(!imageAccessList || !imageAccessStatus) return;
-  imageAccessStatus.textContent = '許可ユーザーを読み込み中...';
-  imageAccessList.innerHTML = '';
-  try{
-    const res = await fetch('./api.php?action=image_access_list', {credentials:'include', cache:'no-store'});
-    const json = await res.json();
-    if(!res.ok || !json.ok) throw new Error(json.error || '許可ユーザーを読み込めませんでした。');
-    applyImageAccessState(json.data || {});
-  }catch(e){
-    imageAccessStatus.textContent = e.message || '許可ユーザーを読み込めませんでした。';
-    imageAccessList.innerHTML = '';
-  }
-}
-
-function applyImageAccessState(state){
-  const rows = Array.isArray(state.users) ? state.users : [];
-  imageAccessMode = state.mode === 'all' ? 'all' : 'limited';
-  updateImageAccessModeUI();
-  renderImageAccessUsers(rows);
-  if(imageAccessStatus){
-    imageAccessStatus.textContent = imageAccessMode === 'all'
-      ? 'ログイン済みユーザー全員が画像学習を利用できます。'
-      : '許可したユーザーのみ画像学習を利用できます。';
-  }
-}
-
-function updateImageAccessModeUI(){
-  imageAccessModeLimited?.classList.toggle('active', imageAccessMode === 'limited');
-  imageAccessModeAll?.classList.toggle('active', imageAccessMode === 'all');
-  if(imageAccessAddBtn){
-    imageAccessAddBtn.disabled = false;
-    imageAccessAddBtn.textContent = '追加';
-  }
-}
-
-async function setImageAccessMode(mode){
-  mode = mode === 'all' ? 'all' : 'limited';
-  imageAccessMode = mode;
-  updateImageAccessModeUI();
-  if(imageAccessStatus) imageAccessStatus.textContent = '切り替え中...';
-  try{
-    const res = await fetch('./api.php?action=image_access_mode', {
-      method:'POST',
-      credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({mode})
-    });
-    const json = await res.json();
-    if(!res.ok || !json.ok) throw new Error(json.error || '切り替えできませんでした。');
-    applyImageAccessState(json.data || {});
-  }catch(e){
-    if(imageAccessStatus) imageAccessStatus.textContent = e.message || '切り替えできませんでした。';
-  }
-}
-
-function renderImageAccessUsers(rows){
-  if(!imageAccessList) return;
-  if(!rows.length){
-    imageAccessList.innerHTML = '<div class="empty-result">許可ユーザーがありません。</div>';
-    return;
-  }
-  imageAccessList.innerHTML = rows.map(row => {
-    const paused = row.status === 'paused';
-    const nextStatus = paused ? 'active' : 'paused';
-    const nextLabel = paused ? '再開' : '一時停止';
-    return `<div class="access-row">
-      <div>
-        <strong>${escapeHtml(row.display_name || row.username || row.user_id)}</strong>
-        <div class="blog-meta">ID ${Number(row.user_id)} / ${escapeHtml(row.username || '')} / ${paused ? '一時停止' : '有効'}</div>
-      </div>
-      <div class="access-actions">
-        <button class="button soft" type="button" onclick="saveImageAccessUser('${nextStatus}', ${Number(row.user_id)})">${nextLabel}</button>
-        <button class="button" type="button" onclick="deleteImageAccessUser(${Number(row.user_id)})">削除</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-async function saveImageAccessUser(status='active', userId=null){
-  const id = Number(userId || imageAccessUserId?.value || 0);
-  if(!id){
-    if(imageAccessStatus) imageAccessStatus.textContent = 'Buddies profile IDを入力してください。';
-    return;
-  }
-  if(imageAccessAddBtn) imageAccessAddBtn.disabled = true;
-  if(imageAccessStatus) imageAccessStatus.textContent = '保存中...';
-  try{
-    const res = await fetch('./api.php?action=image_access_save', {
-      method:'POST',
-      credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({user_id:id, status})
-    });
-    const json = await res.json();
-    if(!res.ok || !json.ok) throw new Error(json.error || '保存できませんでした。');
-    if(imageAccessUserId && !userId) imageAccessUserId.value = '';
-    applyImageAccessState(json.data || {});
-  }catch(e){
-    if(imageAccessStatus) imageAccessStatus.textContent = e.message || '保存できませんでした。';
-  }finally{
-    if(imageAccessAddBtn) imageAccessAddBtn.disabled = false;
-  }
-}
-
-async function deleteImageAccessUser(userId){
-  if(!userId) return;
-  if(imageAccessStatus) imageAccessStatus.textContent = '削除中...';
-  try{
-    const res = await fetch('./api.php?action=image_access_delete', {
-      method:'POST',
-      credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({user_id:userId})
-    });
-    const json = await res.json();
-    if(!res.ok || !json.ok) throw new Error(json.error || '削除できませんでした。');
-    applyImageAccessState(json.data || {});
-  }catch(e){
-    if(imageAccessStatus) imageAccessStatus.textContent = e.message || '削除できませんでした。';
   }
 }
 

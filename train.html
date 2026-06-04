@@ -34,6 +34,7 @@
       <a class="button soft" href="./sort.html"><i class="fas fa-images"></i>仕分け専用</a>
       <a class="button soft" href="./train-image.html"><i class="fas fa-image"></i>画像学習</a>
       <button class="button soft hidden" id="sort-access-open-btn" type="button" onclick="openSortAccessModal()"><i class="fas fa-user-lock"></i>Sort権限</button>
+      <button class="button soft hidden" id="image-access-open-btn" type="button" onclick="openImageAccessModal()"><i class="fas fa-user-lock"></i>画像学習権限</button>
     </div>
   </section>
 
@@ -136,11 +137,34 @@
         <button type="button" id="sort-access-mode-all" onclick="setSortAccessMode('all')">全員に解放</button>
       </div>
       <div class="grid two">
-        <input class="field" id="sort-access-user-id" type="number" inputmode="numeric" min="1" placeholder="Buddies profile ID">
+        <input class="field" id="sort-access-user-id" type="number" inputmode="numeric" min="1" placeholder="ユーザーID">
         <button class="button primary" type="button" id="sort-access-add-btn" onclick="saveSortAccessUser('active')">追加</button>
       </div>
       <p class="status" id="sort-access-status">許可ユーザーを読み込み中...</p>
       <div class="access-user-list" id="sort-access-list"></div>
+    </div>
+  </section>
+</div>
+<div class="modal-backdrop hidden" id="image-access-modal" onclick="closeImageAccessModal(event)">
+  <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="image-access-title">
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Access</p>
+        <h2 id="image-access-title">画像学習権限</h2>
+      </div>
+      <button class="icon-button" type="button" onclick="closeImageAccessModal()"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="access-manager">
+      <div class="seg" role="tablist" aria-label="画像学習権限モード">
+        <button type="button" id="image-access-mode-limited" onclick="setImageAccessMode('limited')">個別許可</button>
+        <button type="button" id="image-access-mode-all" onclick="setImageAccessMode('all')">全員に解放</button>
+      </div>
+      <div class="grid two">
+        <input class="field" id="image-access-user-id" type="number" inputmode="numeric" min="1" placeholder="ユーザーID">
+        <button class="button primary" type="button" id="image-access-add-btn" onclick="saveImageAccessUser('active')">追加</button>
+      </div>
+      <p class="status" id="image-access-status">許可ユーザーを読み込み中...</p>
+      <div class="access-user-list" id="image-access-list"></div>
     </div>
   </section>
 </div>
@@ -151,6 +175,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 <script src="./matcher.js"></script>
-<script src="./train.js?v=20260603-sort-access-mode"></script>
+<script src="./train.js?v=20260604-access-controls"></script>
 </body>
 </html>

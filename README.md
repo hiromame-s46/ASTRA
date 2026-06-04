@@ -396,7 +396,7 @@ Sortは協力者がdescriptorを登録できる画面であるため、単なる
 
 #### 画像学習権限ゲート
 
-`train-image.html` は協力者が任意画像からdescriptorを登録できる画面であるため、Sortとは別の権限設定で制御します。権限設定は `data/image_access.json` に保存され、標準では個別許可モードです。管理者は画像学習画面から、ユーザーIDを使って利用者を追加、一時停止、削除できます。
+`train-image.html` は協力者が任意画像からdescriptorを登録できる画面であるため、Sortとは別の権限設定で制御します。権限設定は `data/image_access.json` に保存され、標準では個別許可モードです。管理者はTrain画面から、ユーザーIDを使って利用者を追加、一時停止、削除できます。
 
 画像学習にも全員解放モードがあります。このモードでもログインは必須で、未ログインの保存は許可されません。Sort権限とは独立しているため、ブログ仕分けだけを許可する運用、任意画像学習だけを許可する運用、両方を許可する運用を分けられます。
 
@@ -706,7 +706,7 @@ Sort権限:
 
 - 標準は個別許可モード
 - 初期状態では管理者ユーザーのみ有効
-- 管理者は画像学習画面からユーザーIDで利用者を追加できる
+- 管理者はTrain画面からユーザーIDで利用者を追加できる
 - 利用者ごとに有効、一時停止、削除を切り替えられる
 - 全員解放モードでは、ログイン済みユーザー全員が画像学習を利用できる
 - 全員解放モードでも未ログインユーザーは保存できない
@@ -1174,7 +1174,7 @@ ASTRA also supports a public sorting mode for temporary open collaboration. Publ
 
 #### Image-training access gate
 
-`train-image.html` can create new descriptors from arbitrary local images, so it uses a separate access policy from sorting. The policy is stored in `data/image_access.json` and defaults to individual permission mode. Administrators can add, pause, resume, or delete users from the image-training page by using their user ID.
+`train-image.html` can create new descriptors from arbitrary local images, so it uses a separate access policy from sorting. The policy is stored in `data/image_access.json` and defaults to individual permission mode. Administrators can add, pause, resume, or delete users from the training page by using their user ID.
 
 ASTRA also supports a public image-training mode for temporary open collaboration. Public mode still requires login; anonymous saves are not accepted. Sorting access and image-training access are independent, so deployments can allow either workflow separately or allow both.
 
@@ -1479,7 +1479,7 @@ Image-training access:
 
 - default mode is individual permission
 - the initial access list contains only the administrator user
-- administrators can add users by user ID from the image-training page
+- administrators can add users by user ID from the training page
 - each user can be active, paused, or deleted
 - public image-training mode allows every logged-in user to use image training
 - public image-training mode still rejects anonymous saves
