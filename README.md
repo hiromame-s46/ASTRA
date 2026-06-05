@@ -6,66 +6,60 @@
 
 **ASTRA** は **Adaptive Scalable Training Recognition Architecture** の略称です。
 
-ASTRAは、小規模コミュニティやイベント運営、研究用データ整理などに使える、ブラウザベースの顔認識・学習データ管理OSSです。顔検出、顔descriptor抽出、候補照合をブラウザ上で行い、サーバーに推論処理やDBを持たせません。PHP側は設定、JSON保存、画像配信、権限確認、埋め込み用APIに集中します。
+ASTRAは、イベント運営、小規模コミュニティ、研究用データ整理、プライベートな画像アーカイブなどに、自分たちの環境で顔認識を組み込むためのOSSです。人物名を登録し、少しずつ顔descriptorを学習していくことで、画像内の顔に対して候補者を表示できるようになります。
 
-このプロジェクトの中心は、**ブラウザのみで動く顔認識パイプライン**です。face-api.jsで顔を検出してdescriptorを作り、`matcher.js` で候補を高速に並べ、JSON APIで学習データと設定を管理します。管理者はASTRA単体の画面を使うだけでなく、同一サーバー内の既存ページから `astra-api.php` と `astra-embed.js` を呼び出してASTRAの判定機能を埋め込めます。
+推論は利用者のブラウザ内で完結します。サーバー側にGPU、常駐推論プロセス、MySQLなどのDBを用意する必要はありません。PHPは管理設定、JSON保存、画像配信、権限確認、埋め込みAPIを担当し、顔検出、descriptor抽出、候補照合はフロントエンドで実行します。一般的なPHPサーバーや既存サイトにも載せやすく、まず小さく導入して、必要な人物と学習データを後から育てていける構成です。
+
+ASTRA単体の判定・学習画面をそのまま使うことも、同じサーバー上の既存ページから `astra-api.php` と `astra-embed.js` を呼び出して判定機能を埋め込むこともできます。公開するのは判定画面だけにして、学習や管理は管理者・協力者だけに制限する、といった運用も `admin.html` から設定できます。
 
 ## 主な特徴
 
-- `matcher.js` によるブラウザ完結の高速顔照合
-- サーバー推論・DB推論なしで動作
-- 顔検出とdescriptor抽出はface-api.jsでブラウザ内実行
-- 128次元descriptorを `Float32Array` に変換して軽量に比較
-- 近すぎる重複descriptorを自動圧縮
-- 人物ごとの代表descriptorプロトタイプを構築
-- プロトタイプで候補を高速に絞り込み、上位候補だけ全descriptorで再評価
-- 最短距離だけに依存しないrobust distanceで候補順を安定化
-- 複数人画像でも顔ごとに候補を表示
+- ブラウザだけで顔検出、descriptor抽出、候補照合を実行
+- サーバー側の推論環境やDBを用意せずに運用可能
 - 判定画面 `index.html` はログインなしで公開可能
-- 初期設定、人物名、権限、学習画像、リセットを `admin.html` に集約
-- アップロード画像学習: `train-upload-image.html`
-- 管理者が追加した画像からの学習: `train-from-image.html`
-- 学習ページごとに、ログイン不要・共通パスワード・協力者ユーザーを選択可能
-- 協力者パスワードはPHP `password_hash()` でハッシュ化
-- ランタイムデータはローカルJSONで管理
+- 初期設定、人物登録、権限、学習画像、学習データのリセットを `admin.html` に集約
+- 協力者が自分の画像から学習できる `train-upload-image.html`
+- 管理者が用意した画像を協力者が確認して学習できる `train-from-image.html`
+- 学習ページごとに、ログインなし、共通パスワード、協力者ユーザーを選択可能
+- 協力者用パスワードはadmin保存時にPHP `password_hash()` で必ずハッシュ化
+- 学習データ、人物設定、統計、権限設定はローカルJSONで管理
+- JSON書き込みはファイルロック付きで、同時保存による破損を抑制
 - `.htaccess` で学習データJSONと管理者アップロード画像の直アクセスを拒否
-- MySQL/PDO/外部DB依存なし
-- 外部 `../data` 依存なし
-- ブログ・仕分け専用データ構造に依存しない汎用設計
-- 同一サーバー内の既存ページから使える埋め込み用ASTRA API
+- 同一サーバー内の既存ページから使えるASTRA APIを同梱
 - 埋め込みAPIは管理画面からオン/オフと許可範囲を切替可能
+- 人物名とdescriptorを登録していく汎用設計
 
 ## 技術アーキテクチャ
 
-ASTRAは、フロントエンド推論、軽量な照合インデックス、JSON永続化、管理者設定、協力者権限、埋め込みAPIを小さく分けて構成しています。特定コミュニティのブログデータや外部DBに依存せず、人物名とdescriptorを登録すれば別のコミュニティにも適用できます。
+ASTRAは、フロントエンド推論、照合インデックス、JSON永続化、管理者設定、協力者権限、埋め込みAPIを分けて構成しています。用途ごとの専用データ構造に固定せず、人物名とdescriptorを中心に扱うため、コミュニティ、イベント、研究用データセット、社内アーカイブなどに合わせて運用できます。
 
 ### 1. ブラウザ推論
 
-顔検出、ランドマーク推定、128次元descriptor生成はブラウザ側で行います。利用者が選んだ画像をサーバーの推論処理に送る必要がなく、GPUサーバーや常駐ワーカーを用意しなくても判定画面を提供できます。サーバーは学習済みdescriptor JSONを配信し、ブラウザがその場で候補を計算します。
+顔検出、ランドマーク推定、128次元descriptor生成はブラウザ側で行います。利用者が選んだ画像をサーバー側の推論処理に渡す必要がなく、GPUサーバーや常駐ワーカーを用意しなくても判定画面を提供できます。サーバーは設定と学習済みdescriptorを配信し、ブラウザがその場で候補を計算します。
 
-### 2. Descriptorインデックス
+### 2. 照合インデックス
 
-保存済みdescriptorはJSON配列として管理されます。`matcher.js` は読み込み時に各descriptorを `Float32Array` に変換し、近すぎる重複descriptorを圧縮します。同じ画像や似た角度から何度も登録されたdescriptorが多い場合でも、照合対象を整理して候補が偏りにくい状態にします。
+保存済みdescriptorはJSON配列として管理されます。読み込み時には各descriptorをブラウザで扱いやすい数値配列に変換し、近すぎる重複descriptorを整理します。同じ画像や似た角度から何度も登録されたdescriptorが多い場合でも、照合対象を軽くし、候補が偏りにくい状態にします。
 
 ### 3. 代表プロトタイプと二段階照合
 
-人物ごとに全descriptorを毎回見るのではなく、まず最大32件の代表プロトタイプを作ります。入力顔descriptorは最初にプロトタイプと比較され、上位候補だけが元の全descriptorで再評価されます。これにより、学習データが増えても全人物・全descriptorの重い比較を毎回行わず、ブラウザのみで実用的な速度を保ちやすくなります。
+人物ごとに全descriptorを毎回比較するのではなく、まず代表的なdescriptorを使って候補を絞り込みます。その後、上位候補だけを元のdescriptor群で再評価します。学習データが増えても全人物・全descriptorを毎回総当たりしないため、ブラウザだけでも実用的な速度を保ちやすくなります。
 
 ### 4. Robust Distance
 
-単純な最近傍距離だけでは、ノイズのあるdescriptorや偶然近い1件に影響されることがあります。ASTRAは上位距離の平均と最短距離を組み合わせ、さらに近傍の一貫性をペナルティとして加えるrobust distanceを使います。候補順が極端な1件に依存しにくくなり、学習データが増えた時も安定したランキングを出しやすくなります。
+単純な最近傍距離だけでは、ノイズのあるdescriptorや偶然近い1件に候補順が引っ張られることがあります。ASTRAは最短距離だけでなく、近いdescriptor群のまとまりも見て候補を並べます。これにより、学習データが増えた時も、極端な1件に依存しにくいランキングを出しやすくなります。
 
 ### 5. JSON永続化
 
-人物名、descriptor、統計、権限、セッションはJSONで保存されます。書き込みはファイルロック付きで行うため、協力者が同時に学習保存してもJSONが壊れにくい設計です。DBを用意しなくても動きますが、`data/*.json` は公開アセットにせず、`.htaccess` やWebサーバー設定で直アクセスを拒否します。
+人物名、descriptor、統計、権限、セッションはJSONで保存されます。書き込みはファイルロック付きで行うため、複数人が同時に学習保存してもJSONが壊れにくい設計です。DBを用意しなくても動きますが、`data/*.json` は公開アセットとして扱わず、`.htaccess` やWebサーバー設定で直アクセスを拒否してください。
 
 ### 6. 管理と権限
 
-管理者ログインは `.env` の管理者認証で行います。協力者向けの学習ページは、ログイン不要、共通パスワード、個別ユーザーのいずれかにできます。共通パスワードと協力者ユーザーのパスワードはハッシュ化して保存します。判定画面は公開し、学習保存や管理だけを制限する構成にできます。
+管理者ログインは `.env` の管理者認証で行います。協力者向けの学習ページは、ログイン不要、共通パスワード、個別ユーザーのいずれかにできます。共通パスワードと協力者ユーザーのパスワードは、admin保存時にハッシュ化して保存します。判定画面は公開し、学習保存や管理だけを制限する構成にできます。
 
 ### 7. 埋め込みAPI
 
-`astra-api.php` と `astra-embed.js` を使うと、同一サーバー内の既存ページからASTRAの判定機能を呼び出せます。APIは管理画面からオン/オフでき、範囲を「判定のみ」または「判定と学習保存」に切り替えられます。外部サイトからのCORS利用は想定せず、同一オリジンのページまたはサーバー内PHPから使う設計です。
+`astra-api.php` と `astra-embed.js` を使うと、同一サーバー内の既存ページからASTRAの判定機能を呼び出せます。APIは管理画面からオン/オフでき、範囲を「判定のみ」または「判定と学習保存」に切り替えられます。外部サイトから利用する公開APIではなく、同じサイト内のページやサーバー内PHPから使う設計です。
 
 ## 画面
 
@@ -80,13 +74,15 @@ astra-embed.js           既存ページ向けブラウザヘルパー
 
 ## セットアップ
 
-1. `.env.example` を `.env` にコピーする
-2. 管理者認証情報を設定する
-3. `admin.html` を開く
-4. コミュニティの人物名を登録する
-5. 2つの学習ページの権限モードを選ぶ
-6. 必要に応じて共通パスワードまたは協力者ユーザーを作る
-7. 必要に応じて `train-from-image.html` 用の画像をアップロードする
+1. ファイル一式をPHPが動作するサーバーに配置する
+2. `.env.example` を `.env` にコピーする
+3. 管理者ログイン用のユーザー名とパスワードを設定する
+4. `admin.html` にログインする
+5. 判定対象にしたい人物名を登録する
+6. 学習ページの権限モードを決める
+7. 必要に応じて共通パスワードまたは協力者ユーザーを作成する
+8. `train-upload-image.html` または `train-from-image.html` で学習データを追加する
+9. `index.html` で判定を確認する
 
 `.env` の例:
 
@@ -95,7 +91,7 @@ ASTRA_ADMIN_USERNAME=admin
 ASTRA_ADMIN_PASSWORD=change-this-password
 ```
 
-本番ではパスワードハッシュの利用を推奨します。
+`.env` がWebから直接読めない状態で管理されているなら、管理者パスワードは `ASTRA_ADMIN_PASSWORD` に直接書いても動作します。必要に応じて、平文の代わりにハッシュを設定できます。
 
 ```bash
 php -r 'echo password_hash("your-password", PASSWORD_DEFAULT) . PHP_EOL;'
@@ -112,21 +108,32 @@ ASTRA_ADMIN_PASSWORD_HASH=$2y$10$...
 
 ## 管理と権限
 
-`admin.html` は常に `.env` の管理者認証が必要です。管理者は人物名の登録、学習ページごとの権限モード、共通パスワード、協力者ユーザー、フォルダ学習用画像、人物別の学習データリセットを操作できます。
+`admin.html` は常に `.env` の管理者認証が必要です。ASTRAの初期設定と運用設定はここに集約されています。
 
-判定画面 `index.html` はログイン不要です。学習ページは `admin.html` から個別に設定できます。
+管理者ができること:
+
+- 人物名の登録、並び替え、削除
+- 学習ページごとの権限モード設定
+- 共通パスワードの設定
+- 協力者ユーザーの作成、停止、削除
+- 協力者ユーザーごとの学習権限設定
+- `train-from-image.html` 用の画像アップロード
+- 特定人物の学習データリセット
+- ASTRA APIのオン/オフと許可範囲の設定
+
+判定画面 `index.html` はログインなしで使えます。学習ページは `admin.html` から個別に設定できます。
 
 ```text
-none    ログイン不要
-shared  共通パスワード
-users   協力者ユーザー
+none    ログインなし。URLを知っている人が学習できる
+shared  共通パスワードで学習できる
+users   管理者が作成した協力者ユーザーだけが学習できる
 ```
 
-共通パスワードと協力者ユーザーは `data/access.json` に保存されます。パスワードは平文ではなくPHPの `password_hash()` で保存されます。協力者ユーザーには、アップロード学習とフォルダ画像学習の権限を別々に付与できます。
+共通パスワードと協力者ユーザーは `admin.html` から設定し、`data/access.json` に保存されます。保存時にPHPの `password_hash()` を通すため、協力者用パスワードは平文では保存されません。協力者ユーザーには、アップロード学習とフォルダ画像学習の権限を別々に付与できます。
 
 ## ASTRA APIの埋め込み
 
-ASTRAを `/ASTRA/` に設置している場合、同じサーバーの別ページから `astra-embed.js` を読み込むことで、既存のトップページや管理者が持つ独自ページに判定機能を組み込めます。
+ASTRAを `/ASTRA/` に設置している場合、同じサーバーの別ページから `astra-embed.js` を読み込むことで、既存のトップページ、会員ページ、管理者用ページなどにASTRAの判定機能を組み込めます。ASTRAの画面をそのまま使うだけでなく、既存サイトのUIに合わせた判定画面を作りたい場合に使います。
 
 まず `admin.html` の **ASTRA API** でAPIを有効化します。
 
@@ -156,7 +163,7 @@ document.getElementById('photo').addEventListener('change', async event => {
 </script>
 ```
 
-`recognizeImage()` は顔ごとに `box`、`score`、`descriptor`、`candidates` を返します。候補表示UIは既存ページ側で自由に作れます。
+`recognizeImage()` は検出した顔ごとに `box`、`score`、`descriptor`、`candidates` を返します。候補表示UI、確認ボタン、保存ボタンなどは既存ページ側で自由に作れます。
 
 ### 埋め込みページから学習保存する例
 
@@ -173,7 +180,7 @@ await astra.saveDescriptor({
 
 ### PHPからサーバー内で読む例
 
-同じサーバー内のPHPから直接データを読む場合は、HTTPではなく `astra-api.php` を読み込めます。
+同じサーバー内のPHPから直接データを読む場合は、HTTPリクエストではなく `astra-api.php` を読み込めます。
 
 ```php
 <?php
@@ -195,16 +202,16 @@ $stats = astra_api_stats();
 
 ### `train-upload-image.html`
 
-協力者がローカル画像を選択します。画像はブラウザ内で解析され、APIへ送信されるのは顔descriptorと選択した人物名だけです。画像ファイル本体は保存しません。少量の手元画像から素早く初期descriptorを作りたい場合に向いています。
+協力者がローカル画像を選択して学習します。画像はブラウザ内で解析され、APIへ送信されるのは顔descriptorと選択した人物名です。画像ファイル本体は保存しません。手元の画像から素早く初期学習データを作りたい場合や、画像をサーバーに残したくない場合に向いています。
 
 ### `train-from-image.html`
 
-管理者が `admin.html` から学習用画像を追加します。協力者は `train-from-image.html` でそれらの画像を順番に確認し、顔ごとに人物名を設定します。画像は `uploads/source/` に保存されますが、直接アクセスは `.htaccess` で拒否し、API経由で権限確認後に配信します。
+管理者が `admin.html` から学習用画像を追加し、協力者が `train-from-image.html` でそれらの画像を確認します。顔ごとに候補が表示されるため、正しい人物を選んで保存します。画像は `uploads/source/` に保存されますが、直接アクセスは `.htaccess` で拒否し、API経由で権限確認後に配信します。
 
 ### スムーズな学習のための設計
 
-- 事前推論で候補人物を自動入力
-- 推論が正しい場合は「正解」で次へ進める
+- 現在の学習データから候補人物を自動表示
+- 推論が正しい場合は最小限の操作で保存可能
 - 変更がない顔を保存対象から外し、重複登録を減らす
 - 小さすぎる顔や検出信頼度の低い顔は保存対象から外す
 - 顔ごとにスキップ可能
@@ -212,7 +219,7 @@ $stats = astra_api_stats();
 
 ## ランタイムデータ
 
-以下のJSONは実行時に自動生成されます。
+以下のJSONは実行時に自動生成されます。リポジトリに含めるファイルではなく、各サーバーで運用しながら育っていくデータです。
 
 ```text
 data/descriptors.json  人物名ごとの顔descriptor
@@ -222,11 +229,11 @@ data/access.json       協力者権限とパスワードハッシュ
 data/sessions.json     ログインセッション
 ```
 
-`data/.htaccess` はJSONファイルへの直アクセスを拒否します。Apache以外では同等の拒否設定を行ってください。
+`data/.htaccess` はJSONファイルへの直アクセスを拒否します。Apache以外では同等の拒否設定を行ってください。`data/*.json` はGit管理から外すことを推奨します。
 
 ## Git管理
 
-以下はGit管理しません。
+以下はGit管理しません。`.gitignore` に含めておくことを推奨します。
 
 ```text
 .env
@@ -269,7 +276,9 @@ uploads/source/*
 ## セキュリティ
 
 - `.env` はバージョン管理に含めない
-- 本番では `ASTRA_ADMIN_PASSWORD_HASH` の利用を推奨
+- `.env` をWebから直接読めない場所または設定で保護する
+- 管理者パスワードは `ASTRA_ADMIN_PASSWORD` に直接設定できる。必要に応じて `ASTRA_ADMIN_PASSWORD_HASH` も使える
+- 協力者の共通パスワードと個別ユーザーのパスワードは、admin保存時に必ずハッシュ化される
 - Apacheでは `data/.htaccess` と `uploads/source/.htaccess` を有効にする
 - Nginxなどでは同等のアクセス拒否設定を行う
 - ランタイムJSONやアップロード画像を公開アセットとして配布しない
@@ -312,18 +321,17 @@ The core value of ASTRA is a **browser-only recognition pipeline**. face-api.js 
 - Admin-provided source-image training: `train-from-image.html`
 - Separate access mode per training page
 - Shared-password or individual contributor-user access
-- Contributor passwords stored as PHP password hashes in JSON
+- Contributor passwords are always hashed with PHP `password_hash()` when saved from admin
 - Runtime data stored in local JSON files
 - `.htaccess` rules to deny direct access to JSON training data and admin-uploaded images
-- No MySQL/PDO/database dependency
-- No external `../data` dependency
-- No blog/sorting data dependency
+- Lightweight setup that can start without provisioning MySQL or another database
+- General-purpose structure built around registered people and descriptors
 - Same-server embedding API for existing pages
 - Admin-controlled API enable/disable and recognition/training scope
 
 ## Technical Architecture
 
-ASTRA is split into browser inference, a lightweight descriptor index, JSON persistence, administration, contributor access, and a same-origin embedding API. It does not depend on a community-specific blog feed or an external database. Once people and descriptors are registered, the same structure can be used for another community or private dataset.
+ASTRA is split into browser inference, a lightweight descriptor index, JSON persistence, administration, contributor access, and a same-origin embedding API. Because it is built around registered people and descriptors, the same structure can grow with communities, events, research datasets, internal archives, or private collections.
 
 ### 1. Browser Inference
 
@@ -381,7 +389,7 @@ ASTRA_ADMIN_USERNAME=admin
 ASTRA_ADMIN_PASSWORD=change-this-password
 ```
 
-For production, prefer a password hash:
+If `.env` cannot be read directly from the web, `ASTRA_ADMIN_PASSWORD` can be used as a plain environment value. For stricter deployments, use a hash instead of the plain value:
 
 ```bash
 php -r 'echo password_hash("your-password", PASSWORD_DEFAULT) . PHP_EOL;'
@@ -408,7 +416,7 @@ shared  Shared contributor password
 users   Individual contributor users
 ```
 
-Contributor users and the shared password are stored in `data/access.json`. Passwords are saved with PHP `password_hash()`, not in plain text. Contributor users can receive upload-training and source-image-training permissions separately.
+Contributor users and the shared password are configured from `admin.html` and stored in `data/access.json`. They are passed through PHP `password_hash()` when saved, so contributor passwords are not stored in plain text. Contributor users can receive upload-training and source-image-training permissions separately.
 
 ## Embedding ASTRA API
 
@@ -555,7 +563,9 @@ uploads/source/*
 ## Security Notes
 
 - Keep `.env` outside version control
-- Use `ASTRA_ADMIN_PASSWORD_HASH` in production when possible
+- Protect `.env` so it cannot be read directly from the web
+- The admin password can be set directly with `ASTRA_ADMIN_PASSWORD`; `ASTRA_ADMIN_PASSWORD_HASH` is available when you want hashed admin credentials
+- Contributor shared passwords and individual user passwords are always hashed when saved from admin
 - Keep `data/.htaccess` and `uploads/source/.htaccess` enabled on Apache
 - Configure equivalent deny rules on Nginx or other servers
 - Do not publish runtime JSON files or uploaded source images as repository assets
