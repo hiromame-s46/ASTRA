@@ -10,15 +10,19 @@ initAdmin();
 sourceInput?.addEventListener('change', uploadSourceImages);
 
 async function initAdmin(){
-  const res = await fetch('./api.php?action=admin_me', {credentials:'include', cache:'no-store'});
-  const json = await res.json();
-  const data = json.data || {};
-  if(!data.configured){
-    setText('login-status', '.env に ASTRA_ADMIN_USERNAME と ASTRA_ADMIN_PASSWORD または ASTRA_ADMIN_PASSWORD_HASH を設定してください。', true);
-  }
-  if(data.admin){
-    showAdminApp();
-    await loadSettings();
+  try{
+    const res = await fetch('./api.php?action=admin_me', {credentials:'include', cache:'no-store'});
+    const json = await readJson(res);
+    const data = json.data || {};
+    if(!data.configured){
+      setText('login-status', '.env に ASTRA_ADMIN_USERNAME と ASTRA_ADMIN_PASSWORD または ASTRA_ADMIN_PASSWORD_HASH を設定してください。', true);
+    }
+    if(data.admin){
+      showAdminApp();
+      await loadSettings();
+    }
+  }catch(e){
+    setText('login-status', e.message || '管理APIに接続できませんでした。', true);
   }
 }
 
@@ -138,11 +142,16 @@ async function saveSharedPassword(){
 
 async function saveUser(){
   setText('user-status', '保存中...');
+  const password = document.getElementById('user-password').value;
+  if(password && password.length < 8){
+    setText('user-status', 'パスワードは8文字以上にしてください。', true);
+    return;
+  }
   const payload = {
     id:document.getElementById('user-id').value,
     username:document.getElementById('user-username').value.trim(),
     display_name:document.getElementById('user-display-name').value.trim(),
-    password:document.getElementById('user-password').value,
+    password,
     status:'active',
     permissions:{
       upload:document.getElementById('perm-upload').checked,

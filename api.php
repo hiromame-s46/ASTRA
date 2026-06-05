@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: same-origin');
+header('X-Frame-Options: SAMEORIGIN');
 
 $baseDir = __DIR__;
 $dataDir = $baseDir . '/data';
@@ -12,6 +14,8 @@ $statsFile = $dataDir . '/stats.json';
 $membersFile = $dataDir . '/members.json';
 $accessFile = $dataDir . '/access.json';
 $sessionsFile = $dataDir . '/sessions.json';
+const MAX_SOURCE_IMAGE_BYTES = 8_388_608;
+const MAX_SOURCE_UPLOAD_FILES = 100;
 
 if (!is_dir($dataDir)) mkdir($dataDir, 0775, true);
 if (!is_dir($uploadDir)) mkdir($uploadDir, 0775, true);
@@ -49,7 +53,7 @@ try {
         'contributor_logout' => logout($sessionsFile),
         'source_images' => source_images($accessFile, $sessionsFile, $sourceDir),
         'source_image' => source_image($accessFile, $sessionsFile, $sourceDir),
-        'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir, $accessFile, $sessionsFile),
+        'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir, $accessFile, $membersFile),
         default => send_json(['ok' => false, 'error' => 'unknown action'], 404),
     };
 } catch (Throwable $e) {
@@ -189,8 +193,8 @@ function normalize_members(array $data): array {
         $name = trim((string)($row['name'] ?? ''));
         if ($name === '') continue;
         $next[] = [
-            'id' => trim((string)($row['id'] ?? slug_member($name))),
-            'name' => $name,
+        'id' => truncate_text(trim((string)($row['id'] ?? slug_member($name))), 80),
+        'name' => truncate_text($name, 120),
             'group' => trim((string)($row['group'] ?? '')),
             'active' => !array_key_exists('active', $row) || (bool)$row['active'],
         ];
@@ -205,6 +209,11 @@ function normalize_members(array $data): array {
 
 function slug_member(string $name): string {
     return strtolower(trim(preg_replace('/[^A-Za-z0-9]+/', '-', $name), '-')) ?: bin2hex(random_bytes(4));
+}
+
+function truncate_text(string $value, int $length): string {
+    if (function_exists('mb_substr')) return mb_substr($value, 0, $length);
+    return substr($value, 0, $length);
 }
 
 function build_stats(string $descriptorFile): array {
@@ -263,7 +272,15 @@ function current_session(): ?array {
     if (!is_string($token) || $token === '') return null;
     $sessions = read_json($sessionsFile);
     $row = $sessions[$token] ?? null;
-    if (!is_array($row) || (int)($row['expires'] ?? 0) < time()) return null;
+    if (!is_array($row) || (int)($row['expires'] ?? 0) < time()) {
+        if (is_array($row)) {
+            mutate_json_locked($sessionsFile, static function (array $sessions) use ($token): array {
+                unset($sessions[$token]);
+                return $sessions;
+            });
+        }
+        return null;
+    }
     return $row;
 }
 
@@ -338,7 +355,9 @@ function admin_settings(string $membersFile, string $accessFile, string $descrip
 function admin_save_members(string $membersFile): never {
     require_admin();
     $payload = request_json();
-    write_json_locked($membersFile, normalize_members($payload['members'] ?? []));
+    $members = normalize_members($payload['members'] ?? []);
+    if (count($members) > 500) send_json(['ok' => false, 'error' => '人物は500件以内にしてください。'], 400);
+    write_json_locked($membersFile, $members);
     send_json(['ok' => true, 'data' => normalize_members(read_json($membersFile))]);
 }
 
@@ -375,11 +394,20 @@ function admin_save_user(string $accessFile): never {
     $payload = request_json();
     $username = trim((string)($payload['username'] ?? ''));
     if ($username === '') send_json(['ok' => false, 'error' => 'ユーザー名を入力してください。'], 400);
+    if (!preg_match('/^[A-Za-z0-9_.@-]{3,64}$/', $username)) {
+        send_json(['ok' => false, 'error' => 'ユーザー名は3〜64文字の英数字、._@-で入力してください。'], 400);
+    }
     $id = trim((string)($payload['id'] ?? ''));
     $password = (string)($payload['password'] ?? '');
     $current = normalize_access(read_json($accessFile));
     if ($id === '' && $password === '') send_json(['ok' => false, 'error' => '新規ユーザーにはパスワードが必要です。'], 400);
+    if ($password !== '' && strlen($password) < 8) send_json(['ok' => false, 'error' => 'パスワードは8文字以上にしてください。'], 400);
     if ($id !== '' && !isset($current['users'][$id])) send_json(['ok' => false, 'error' => '更新対象のユーザーが見つかりません。'], 404);
+    foreach ($current['users'] as $existingId => $row) {
+        if ($existingId !== $id && strcasecmp((string)($row['username'] ?? ''), $username) === 0) {
+            send_json(['ok' => false, 'error' => '同じユーザー名がすでに登録されています。'], 409);
+        }
+    }
     $now = gmdate('c');
     mutate_json_locked($accessFile, static function (array $data) use ($payload, $username, $id, $password, $now): array {
         $access = normalize_access($data);
@@ -406,6 +434,7 @@ function admin_save_user(string $accessFile): never {
 function admin_delete_user(string $accessFile): never {
     require_admin();
     $id = trim((string)(request_json()['id'] ?? ''));
+    if ($id === '') send_json(['ok' => false, 'error' => 'user id is required'], 400);
     mutate_json_locked($accessFile, static function (array $data) use ($id): array {
         $access = normalize_access($data);
         unset($access['users'][$id]);
@@ -469,11 +498,6 @@ function normalize_page(string $page): string {
     return $page === 'from_image' ? 'from_image' : 'upload';
 }
 
-function ensure_training_access(string $page, string $accessFile, string $sessionsFile): void {
-    ob_start();
-    access_me($accessFile, $sessionsFile);
-}
-
 function is_training_allowed(string $page, string $accessFile): bool {
     $access = normalize_access(read_json($accessFile));
     $mode = $access['pages'][$page]['mode'];
@@ -488,7 +512,7 @@ function is_training_allowed(string $page, string $accessFile): bool {
     return false;
 }
 
-function save_descriptor(string $descriptorFile, string $statsFile, string $uploadDir, string $accessFile, string $sessionsFile): never {
+function save_descriptor(string $descriptorFile, string $statsFile, string $uploadDir, string $accessFile, string $membersFile): never {
     $payload = request_json();
     $source = (string)($payload['source'] ?? 'upload');
     $page = $source === 'from_image' ? 'from_image' : 'upload';
@@ -496,13 +520,21 @@ function save_descriptor(string $descriptorFile, string $statsFile, string $uplo
     $member = trim((string)($payload['member'] ?? ''));
     $descriptor = $payload['descriptor'] ?? null;
     if ($member === '') send_json(['ok' => false, 'error' => 'member is required'], 400);
+    if (!member_exists($member, $membersFile)) send_json(['ok' => false, 'error' => 'member is not configured'], 400);
     if (!is_array($descriptor) || count($descriptor) !== 128) send_json(['ok' => false, 'error' => 'descriptor is invalid'], 400);
+
+    $normalizedDescriptor = [];
+    foreach ($descriptor as $value) {
+        $number = (float)$value;
+        if (!is_finite($number)) send_json(['ok' => false, 'error' => 'descriptor contains invalid values'], 400);
+        $normalizedDescriptor[] = round($number, 8);
+    }
 
     $row = [
         'id' => bin2hex(random_bytes(12)),
-        'descriptor' => array_map(static fn($v) => round((float)$v, 8), $descriptor),
+        'descriptor' => $normalizedDescriptor,
         'source' => $page,
-        'source_name' => trim((string)($payload['source_name'] ?? '')),
+        'source_name' => truncate_text(trim((string)($payload['source_name'] ?? '')), 180),
         'created_at' => gmdate('c'),
     ];
     $count = 0;
@@ -520,6 +552,13 @@ function save_descriptor(string $descriptorFile, string $statsFile, string $uplo
     );
     cleanup_uploads($uploadDir);
     send_json(['ok' => true, 'member' => $member, 'count' => $count]);
+}
+
+function member_exists(string $member, string $membersFile): bool {
+    foreach (normalize_members(read_json($membersFile)) as $row) {
+        if (($row['name'] ?? '') === $member) return true;
+    }
+    return false;
 }
 
 function reset_member_descriptors(string $descriptorFile, string $statsFile, string $uploadDir): never {
@@ -546,15 +585,18 @@ function admin_upload_source_images(string $sourceDir): never {
     require_admin();
     if (empty($_FILES['images'])) send_json(['ok' => false, 'error' => 'images are required'], 400);
     $files = normalize_upload_files($_FILES['images']);
+    if (count($files) > MAX_SOURCE_UPLOAD_FILES) send_json(['ok' => false, 'error' => '一度にアップロードできる画像は100枚までです。'], 400);
     $saved = [];
     foreach ($files as $file) {
         if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) continue;
+        if ((int)($file['size'] ?? 0) <= 0 || (int)$file['size'] > MAX_SOURCE_IMAGE_BYTES) continue;
         $info = @getimagesize($file['tmp_name']);
         if (!$info || empty($info['mime']) || !str_starts_with($info['mime'], 'image/')) continue;
+        if (!in_array($info['mime'], ['image/jpeg', 'image/png', 'image/webp'], true)) continue;
         $ext = match ($info['mime']) {
             'image/png' => 'png',
             'image/webp' => 'webp',
-            default => 'jpg',
+            'image/jpeg' => 'jpg',
         };
         $name = gmdate('YmdHis') . '-' . bin2hex(random_bytes(5)) . '.' . $ext;
         if (move_uploaded_file($file['tmp_name'], $sourceDir . '/' . $name)) $saved[] = $name;
@@ -579,7 +621,8 @@ function normalize_upload_files(array $field): array {
 
 function admin_delete_source_image(string $sourceDir): never {
     require_admin();
-    $id = basename((string)(request_json()['id'] ?? ''));
+    $id = sanitize_source_image_id((string)(request_json()['id'] ?? ''));
+    if ($id === '') send_json(['ok' => false, 'error' => 'image id is required'], 400);
     if ($id !== '' && is_file($sourceDir . '/' . $id)) unlink($sourceDir . '/' . $id);
     send_json(['ok' => true, 'data' => list_source_images($sourceDir)]);
 }
@@ -594,7 +637,7 @@ function source_image(string $accessFile, string $sessionsFile, string $sourceDi
         http_response_code(403);
         exit('access denied');
     }
-    $id = basename((string)($_GET['id'] ?? ''));
+    $id = sanitize_source_image_id((string)($_GET['id'] ?? ''));
     $path = $sourceDir . '/' . $id;
     if ($id === '' || !is_file($path)) {
         http_response_code(404);
@@ -615,6 +658,7 @@ function list_source_images(string $sourceDir): array {
     $rows = [];
     foreach (glob($sourceDir . '/*') ?: [] as $path) {
         if (!is_file($path) || basename($path) === '.gitkeep') continue;
+        if (sanitize_source_image_id(basename($path)) === '') continue;
         $info = @getimagesize($path);
         if (!$info || empty($info['mime']) || !str_starts_with($info['mime'], 'image/')) continue;
         $rows[] = [
@@ -626,6 +670,11 @@ function list_source_images(string $sourceDir): array {
     }
     usort($rows, static fn($a, $b) => strcmp($a['name'], $b['name']));
     return $rows;
+}
+
+function sanitize_source_image_id(string $id): string {
+    $id = basename($id);
+    return preg_match('/^\d{14}-[a-f0-9]{10}\.(jpg|png|webp)$/', $id) ? $id : '';
 }
 
 function cleanup_uploads(string $uploadDir): void {
