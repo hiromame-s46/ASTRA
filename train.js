@@ -258,12 +258,49 @@ async function refreshStats(){
   stats = await res.json();
   document.getElementById('stats').innerHTML = selectableMembers.map(m => {
     const row = stats[m.name] || {count:0, updated_at:''};
+    const count = Number(row.count || 0);
     return `<div class="stat-card">
       <div class="stat-name">${escapeHtml(m.name)}</div>
-      <div class="stat-count">${row.count || 0}</div>
+      <div class="stat-count">${count}</div>
       <div class="stat-date">${row.updated_at ? escapeHtml(row.updated_at.slice(0,10)) : '未登録'}</div>
+      <button class="button stat-reset" type="button" data-member="${escapeHtml(m.name)}" data-count="${count}" onclick="resetMemberDescriptorsFromButton(this)" ${count ? '' : 'disabled'}>リセット</button>
     </div>`;
   }).join('');
+}
+
+function resetMemberDescriptorsFromButton(button){
+  resetMemberDescriptors(button?.dataset?.member || '', Number(button?.dataset?.count || 0));
+}
+
+async function resetMemberDescriptors(member, count=0){
+  if(Number(authUser?.id) !== 1 || !member) return;
+  const currentCount = Number(stats?.[member]?.count ?? count ?? 0);
+  if(currentCount <= 0){
+    setStatus(`${member}の学習データは未登録です。`);
+    return;
+  }
+  const first = confirm(`${member}の学習データ ${currentCount}件をすべて削除します。\nこのメンバーだけをリセットします。続行しますか？`);
+  if(!first) return;
+  const second = confirm(`最終確認です。\n${member}の学習データを削除すると元に戻せません。削除しますか？`);
+  if(!second) return;
+
+  setStatus(`${member}の学習データをリセット中...`);
+  try{
+    const res = await fetch('./api.php?action=reset_member_descriptors', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({member})
+    });
+    const json = await readJsonResponse(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || 'リセットできませんでした。');
+    await refreshStats();
+    await refreshMatcher();
+    setStatus(`${member}の学習データを${Number(json.deleted || 0)}件リセットしました。再学習できます。`);
+  }catch(e){
+    console.error(e);
+    setStatus(e.message || 'リセット中にエラーが発生しました。', true);
+  }
 }
 
 async function loadBlogQueue(){

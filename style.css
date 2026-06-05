@@ -65,6 +65,7 @@ h1{font-size:1.8rem;line-height:1.25;margin:0;font-weight:700;}
 .stat-name{font-size:.82rem;font-weight:700;margin-bottom:4px;}
 .stat-count{font-size:1.15rem;font-weight:700;color:#1f2937;}
 .stat-date{font-size:.68rem;font-weight:700;color:#9ca3af;margin-top:2px;}
+.stat-reset{width:100%;min-height:34px;margin-top:8px;padding:.42rem .68rem;font-size:.72rem;color:#ef4444;border-color:#fecaca;background:#fff;}
 .train-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(280px,.9fr);gap:14px;align-items:start;}
 .face-list{display:grid;gap:7px;margin-top:8px;}
 .face-option{border:1.5px solid #f3f4f6;border-radius:.9rem;background:#fff;padding:8px;display:grid;grid-template-columns:64px minmax(0,1fr);gap:9px;align-items:center;}

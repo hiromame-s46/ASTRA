@@ -41,6 +41,7 @@ try {
         'stats' => send_json(build_stats($descriptorFile)),
         'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir),
         'delete_descriptors' => delete_descriptors($descriptorFile, $statsFile, $uploadDir),
+        'reset_member_descriptors' => reset_member_descriptors($descriptorFile, $statsFile, $uploadDir),
         'proxy_image' => proxy_image(),
         default => send_json(['error' => 'unknown action'], 404),
     };
@@ -515,6 +516,30 @@ function delete_descriptors(string $descriptorFile, string $statsFile, string $u
     );
     cleanup_uploads($uploadDir);
     send_json(['ok' => true, 'deleted' => $deleted]);
+}
+
+function reset_member_descriptors(string $descriptorFile, string $statsFile, string $uploadDir): never {
+    require_admin_user();
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
+    $member = trim((string)($payload['member'] ?? ''));
+    if ($member === '') send_json(['ok' => false, 'error' => 'member is required'], 400);
+
+    $deleted = 0;
+    mutate_json_locked(
+        $descriptorFile,
+        static function (array $data) use ($member, &$deleted): array {
+            $rows = $data[$member] ?? [];
+            $deleted = is_array($rows) ? count($rows) : 0;
+            unset($data[$member]);
+            return $data;
+        },
+        static function (array $data) use ($statsFile): void {
+            write_json_locked($statsFile, build_stats_from_data($data));
+        }
+    );
+    cleanup_uploads($uploadDir);
+    send_json(['ok' => true, 'member' => $member, 'deleted' => $deleted]);
 }
 
 function cleanup_uploads(string $uploadDir): void {
