@@ -1,8 +1,8 @@
 # Changelog
 
-## v1.0.0 - 2026-06-05
+## v0.2.0 - 2026-06-05
 
-First major OSS-oriented release of ASTRA.
+OSS-oriented preview release of ASTRA.
 
 ### Changed
 
