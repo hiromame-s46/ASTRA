@@ -42,6 +42,7 @@ try {
         'admin_settings' => admin_settings($membersFile, $accessFile, $descriptorFile, $sourceDir),
         'admin_save_members' => admin_save_members($membersFile),
         'admin_save_access' => admin_save_access($accessFile),
+        'admin_save_embed' => admin_save_embed($accessFile),
         'admin_set_shared_password' => admin_set_shared_password($accessFile),
         'admin_save_user' => admin_save_user($accessFile),
         'admin_delete_user' => admin_delete_user($accessFile),
@@ -141,6 +142,10 @@ function default_access(): array {
             'upload' => ['mode' => 'shared'],
             'from_image' => ['mode' => 'shared'],
         ],
+        'embed' => [
+            'enabled' => false,
+            'scope' => 'recognition',
+        ],
         'shared' => ['password_hash' => '', 'updated_at' => ''],
         'users' => [],
     ];
@@ -153,6 +158,15 @@ function normalize_access(array $data): array {
         $mode = (string)($pages[$page]['mode'] ?? $default['pages'][$page]['mode']);
         if (!in_array($mode, ['none', 'shared', 'users'], true)) $mode = 'shared';
         $default['pages'][$page]['mode'] = $mode;
+    }
+    $embed = $data['embed'] ?? [];
+    if (is_array($embed)) {
+        $scope = (string)($embed['scope'] ?? 'recognition');
+        if (!in_array($scope, ['recognition', 'training'], true)) $scope = 'recognition';
+        $default['embed'] = [
+            'enabled' => !empty($embed['enabled']),
+            'scope' => $scope,
+        ];
     }
     $shared = $data['shared'] ?? [];
     if (is_array($shared)) {
@@ -193,8 +207,8 @@ function normalize_members(array $data): array {
         $name = trim((string)($row['name'] ?? ''));
         if ($name === '') continue;
         $next[] = [
-        'id' => truncate_text(trim((string)($row['id'] ?? slug_member($name))), 80),
-        'name' => truncate_text($name, 120),
+            'id' => truncate_text(trim((string)($row['id'] ?? slug_member($name))), 80),
+            'name' => truncate_text($name, 120),
             'group' => trim((string)($row['group'] ?? '')),
             'active' => !array_key_exists('active', $row) || (bool)$row['active'],
         ];
@@ -343,6 +357,7 @@ function admin_settings(string $membersFile, string $accessFile, string $descrip
         'members' => normalize_members(read_json($membersFile)),
         'access' => [
             'pages' => $access['pages'],
+            'embed' => $access['embed'],
             'shared_ready' => $access['shared']['password_hash'] !== '',
             'shared_updated_at' => $access['shared']['updated_at'],
             'users' => $users,
@@ -371,6 +386,23 @@ function admin_save_access(string $accessFile): never {
             $mode = (string)($pages[$page]['mode'] ?? $access['pages'][$page]['mode']);
             if (in_array($mode, ['none', 'shared', 'users'], true)) $access['pages'][$page]['mode'] = $mode;
         }
+        return $access;
+    });
+    send_json(['ok' => true]);
+}
+
+function admin_save_embed(string $accessFile): never {
+    require_admin();
+    $payload = request_json();
+    $enabled = !empty($payload['enabled']);
+    $scope = (string)($payload['scope'] ?? 'recognition');
+    if (!in_array($scope, ['recognition', 'training'], true)) $scope = 'recognition';
+    mutate_json_locked($accessFile, static function (array $data) use ($enabled, $scope): array {
+        $access = normalize_access($data);
+        $access['embed'] = [
+            'enabled' => $enabled,
+            'scope' => $scope,
+        ];
         return $access;
     });
     send_json(['ok' => true]);

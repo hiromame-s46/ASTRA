@@ -6,9 +6,9 @@
 
 **ASTRA** は **Adaptive Scalable Training Recognition Architecture** の略称です。
 
-ASTRAは、小規模コミュニティやイベント運営、研究用データ整理などに使える、ブラウザベースの顔認識・学習データ管理OSSです。顔検出と顔descriptor抽出はブラウザ上で行い、照合も `matcher.js` がブラウザ内で実行します。サーバーに推論処理やDBを持たせず、PHP APIは設定、JSON保存、画像配信、権限確認に集中します。
+ASTRAは、小規模コミュニティやイベント運営、研究用データ整理などに使える、ブラウザベースの顔認識・学習データ管理OSSです。顔検出、顔descriptor抽出、候補照合をブラウザ上で行い、サーバーに推論処理やDBを持たせません。PHP側は設定、JSON保存、画像配信、権限確認、埋め込み用APIに集中します。
 
-このプロジェクトの中心は、**ブラウザのみで動く高速推論**です。`matcher.js` は、保存済みdescriptorをそのまま総当たりするだけではなく、重複除去、人物ごとの代表プロトタイプ構築、二段階候補検索、robust distanceによる安定スコアリングを行います。これにより、共有サーバーや静的寄りのPHP環境でも導入しやすく、利用者の画像をサーバー推論に送らずに判定体験を作れます。
+このプロジェクトの中心は、**ブラウザのみで動く顔認識パイプライン**です。face-api.jsで顔を検出してdescriptorを作り、`matcher.js` で候補を高速に並べ、JSON APIで学習データと設定を管理します。管理者はASTRA単体の画面を使うだけでなく、同一サーバー内の既存ページから `astra-api.php` と `astra-embed.js` を呼び出してASTRAの判定機能を埋め込めます。
 
 ## 主な特徴
 
@@ -32,38 +32,40 @@ ASTRAは、小規模コミュニティやイベント運営、研究用データ
 - MySQL/PDO/外部DB依存なし
 - 外部 `../data` 依存なし
 - ブログ・仕分け専用データ構造に依存しない汎用設計
+- 同一サーバー内の既存ページから使える埋め込み用ASTRA API
+- 埋め込みAPIは管理画面からオン/オフと許可範囲を切替可能
 
-## 独自技術: `matcher.js`
+## 技術アーキテクチャ
 
-ASTRAの照合コアは `matcher.js` です。一般的な小規模実装では、入力顔descriptorと保存済みdescriptorを単純に総当たり比較し、最短距離だけで候補を選びがちです。ASTRAはそれを避け、ブラウザ内で軽量な検索インデックスを作ります。
+ASTRAは、フロントエンド推論、軽量な照合インデックス、JSON永続化、管理者設定、協力者権限、埋め込みAPIを小さく分けて構成しています。特定コミュニティのブログデータや外部DBに依存せず、人物名とdescriptorを登録すれば別のコミュニティにも適用できます。
 
-### 1. Descriptor正規化
+### 1. ブラウザ推論
 
-保存済みdescriptorはJSON配列として管理されます。`matcher.js` は読み込み時に各descriptorを128次元の `Float32Array` に変換します。これにより、比較時の数値処理を安定させ、ブラウザ内で扱いやすい形に揃えます。
+顔検出、ランドマーク推定、128次元descriptor生成はブラウザ側で行います。利用者が選んだ画像をサーバーの推論処理に送る必要がなく、GPUサーバーや常駐ワーカーを用意しなくても判定画面を提供できます。サーバーは学習済みdescriptor JSONを配信し、ブラウザがその場で候補を計算します。
 
-### 2. 重複descriptorの圧縮
+### 2. Descriptorインデックス
 
-同じ画像や似た角度から何度も登録されたdescriptorが多いと、推論速度が落ちるだけでなく、特定の顔だけに候補が引っ張られやすくなります。`matcher.js` は `duplicateDistance` 以下の近すぎるdescriptorを重複として扱い、人物ごとのdescriptor集合を圧縮します。
+保存済みdescriptorはJSON配列として管理されます。`matcher.js` は読み込み時に各descriptorを `Float32Array` に変換し、近すぎる重複descriptorを圧縮します。同じ画像や似た角度から何度も登録されたdescriptorが多い場合でも、照合対象を整理して候補が偏りにくい状態にします。
 
-### 3. 代表プロトタイプ生成
+### 3. 代表プロトタイプと二段階照合
 
-人物ごとに全descriptorを毎回見るのではなく、まず最大32件の代表プロトタイプを作ります。中心に近いdescriptorから始め、遠い特徴も拾うように選択し、その後クラスタごとに代表を再調整します。これにより、正面、横顔、照明差、表情差のような幅を残しながら、照合対象を軽量化します。
+人物ごとに全descriptorを毎回見るのではなく、まず最大32件の代表プロトタイプを作ります。入力顔descriptorは最初にプロトタイプと比較され、上位候補だけが元の全descriptorで再評価されます。これにより、学習データが増えても全人物・全descriptorの重い比較を毎回行わず、ブラウザのみで実用的な速度を保ちやすくなります。
 
-### 4. 二段階候補検索
+### 4. Robust Distance
 
-入力顔descriptorに対して、まず各人物のプロトタイプだけを比較します。ここで候補人物を高速に絞り込み、上位候補だけを元の全descriptorで再評価します。大量のdescriptorを持つ運用でも、全人物・全descriptorの重い比較を毎回行わないため、ブラウザのみで実用的な速度を保ちやすくなります。
+単純な最近傍距離だけでは、ノイズのあるdescriptorや偶然近い1件に影響されることがあります。ASTRAは上位距離の平均と最短距離を組み合わせ、さらに近傍の一貫性をペナルティとして加えるrobust distanceを使います。候補順が極端な1件に依存しにくくなり、学習データが増えた時も安定したランキングを出しやすくなります。
 
-### 5. Robust Distance
+### 5. JSON永続化
 
-単純な最近傍距離だけでは、ノイズのあるdescriptorや偶然近い1件に影響されることがあります。ASTRAは上位距離の平均と最短距離を組み合わせ、さらに近傍の一貫性をペナルティとして加えるrobust distanceを使います。これにより、候補順が極端な1件に依存しにくくなり、学習データが増えた時も安定したランキングを出しやすくなります。
+人物名、descriptor、統計、権限、セッションはJSONで保存されます。書き込みはファイルロック付きで行うため、協力者が同時に学習保存してもJSONが壊れにくい設計です。DBを用意しなくても動きますが、`data/*.json` は公開アセットにせず、`.htaccess` やWebサーバー設定で直アクセスを拒否します。
 
-### 6. 完全ブラウザ実行の利点
+### 6. 管理と権限
 
-- 利用者画像をサーバー推論に送らない
-- GPUサーバーや常駐推論プロセスが不要
-- PHPが動く一般的なレンタルサーバーでも導入しやすい
-- 判定画面を公開しつつ、学習や管理だけを権限管理できる
-- descriptor JSONを差し替えるだけで推論データを更新できる
+管理者ログインは `.env` の管理者認証で行います。協力者向けの学習ページは、ログイン不要、共通パスワード、個別ユーザーのいずれかにできます。共通パスワードと協力者ユーザーのパスワードはハッシュ化して保存します。判定画面は公開し、学習保存や管理だけを制限する構成にできます。
+
+### 7. 埋め込みAPI
+
+`astra-api.php` と `astra-embed.js` を使うと、同一サーバー内の既存ページからASTRAの判定機能を呼び出せます。APIは管理画面からオン/オフでき、範囲を「判定のみ」または「判定と学習保存」に切り替えられます。外部サイトからのCORS利用は想定せず、同一オリジンのページまたはサーバー内PHPから使う設計です。
 
 ## 画面
 
@@ -72,6 +74,8 @@ index.html               公開判定画面
 admin.html               初期設定・管理画面
 train-upload-image.html  協力者がローカル画像から学習
 train-from-image.html    管理者が追加した画像から学習
+astra-api.php            同一サーバー内埋め込み用API
+astra-embed.js           既存ページ向けブラウザヘルパー
 ```
 
 ## セットアップ
@@ -119,6 +123,73 @@ users   協力者ユーザー
 ```
 
 共通パスワードと協力者ユーザーは `data/access.json` に保存されます。パスワードは平文ではなくPHPの `password_hash()` で保存されます。協力者ユーザーには、アップロード学習とフォルダ画像学習の権限を別々に付与できます。
+
+## ASTRA APIの埋め込み
+
+ASTRAを `/ASTRA/` に設置している場合、同じサーバーの別ページから `astra-embed.js` を読み込むことで、既存のトップページや管理者が持つ独自ページに判定機能を組み込めます。
+
+まず `admin.html` の **ASTRA API** でAPIを有効化します。
+
+```text
+無効        埋め込みAPIを使わない
+判定のみ    descriptor取得とブラウザ判定のみ許可
+学習も許可  埋め込みページからdescriptor保存も許可
+```
+
+### ブラウザから判定する例
+
+```html
+<input type="file" id="photo" accept="image/*">
+<pre id="result"></pre>
+
+<script src="/ASTRA/astra-embed.js"></script>
+<script>
+const astra = AstraEmbed.create({ basePath: '/ASTRA/' });
+
+document.getElementById('photo').addEventListener('change', async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  await astra.init();
+  const faces = await astra.recognizeImage(file);
+  document.getElementById('result').textContent = JSON.stringify(faces, null, 2);
+});
+</script>
+```
+
+`recognizeImage()` は顔ごとに `box`、`score`、`descriptor`、`candidates` を返します。候補表示UIは既存ページ側で自由に作れます。
+
+### 埋め込みページから学習保存する例
+
+管理画面でASTRA APIの範囲を「判定と学習保存」にした場合のみ、埋め込みページからdescriptorを保存できます。
+
+```js
+const faces = await astra.recognizeImage(file);
+await astra.saveDescriptor({
+  member: 'Alice',
+  descriptor: faces[0].descriptor,
+  sourceName: 'custom-admin-page'
+});
+```
+
+### PHPからサーバー内で読む例
+
+同じサーバー内のPHPから直接データを読む場合は、HTTPではなく `astra-api.php` を読み込めます。
+
+```php
+<?php
+require_once __DIR__ . '/ASTRA/astra-api.php';
+
+$members = astra_api_members();
+$stats = astra_api_stats();
+```
+
+### 埋め込みAPIの制限
+
+- 管理画面で有効化されていない場合は `astra-api.php` は403を返す
+- 外部サイト向けCORSヘッダーは出さない
+- ブラウザからのHTTP利用は同一オリジン要求に限定
+- サーバー外から公開APIとして使う用途は想定しない
+- 学習保存は管理画面で「判定と学習保存」にした場合のみ許可
 
 ## 学習ワークフロー
 
@@ -179,6 +250,8 @@ uploads/source/*
 ├── admin.js
 ├── training.js
 ├── matcher.js
+├── astra-api.php
+├── astra-embed.js
 ├── api.php
 ├── style.css
 ├── data/
@@ -202,6 +275,7 @@ uploads/source/*
 - ランタイムJSONやアップロード画像を公開アセットとして配布しない
 - 協力者権限を使う場合はHTTPSで運用する
 - 公開判定画面でブラウザ推論を行う都合上、判定に必要なdescriptorはAPI経由でブラウザに渡される
+- `astra-api.php` は同一オリジン埋め込み用途であり、外部サイト向け公開APIとして扱わない
 
 ## ライセンス
 
@@ -217,9 +291,9 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 **ASTRA** is **Adaptive Scalable Training Recognition Architecture**.
 
-ASTRA is a browser-based face recognition and training-data management OSS for small communities, events, research datasets, and private collections. Face detection and descriptor extraction run in the browser, and matching is also performed in the browser by `matcher.js`. The server does not need inference workers or a database. The PHP API focuses on settings, JSON storage, image delivery, and access checks.
+ASTRA is a browser-based face recognition and training-data management OSS for small communities, events, research datasets, and private collections. Face detection, descriptor extraction, and candidate matching run in the browser. The server does not need inference workers or a database. The PHP side focuses on settings, JSON storage, image delivery, access checks, and same-origin embedding APIs.
 
-The core value of ASTRA is **fast browser-only inference**. `matcher.js` does more than a naive all-vs-all descriptor scan: it normalizes descriptors, compacts near-duplicates, builds per-person representative prototypes, performs two-stage candidate search, and ranks candidates with robust distance. This makes ASTRA practical on simple PHP hosting while keeping user images away from server-side inference.
+The core value of ASTRA is a **browser-only recognition pipeline**. face-api.js detects faces and creates descriptors, `matcher.js` ranks candidates, JSON APIs manage training data and settings, and `astra-api.php` / `astra-embed.js` let same-origin pages outside the ASTRA directory call ASTRA from existing site pages.
 
 ## Highlights
 
@@ -244,38 +318,40 @@ The core value of ASTRA is **fast browser-only inference**. `matcher.js` does mo
 - No MySQL/PDO/database dependency
 - No external `../data` dependency
 - No blog/sorting data dependency
+- Same-server embedding API for existing pages
+- Admin-controlled API enable/disable and recognition/training scope
 
-## Original Technology: `matcher.js`
+## Technical Architecture
 
-ASTRA's matching core is `matcher.js`. A simple small-scale face matcher often compares the input descriptor against every saved descriptor and chooses the nearest one. ASTRA avoids relying on that alone. It builds a lightweight browser-side search index that stays useful as training data grows.
+ASTRA is split into browser inference, a lightweight descriptor index, JSON persistence, administration, contributor access, and a same-origin embedding API. It does not depend on a community-specific blog feed or an external database. Once people and descriptors are registered, the same structure can be used for another community or private dataset.
 
-### 1. Descriptor Normalization
+### 1. Browser Inference
 
-Saved descriptors are stored as JSON arrays. `matcher.js` converts each valid descriptor into a 128-dimensional `Float32Array` at load time. This keeps numeric comparison predictable and efficient inside the browser.
+Face detection, landmark detection, and 128-dimensional descriptor extraction run in the browser. User images do not need to be sent to a server-side inference worker. The server provides descriptor JSON and settings, while the browser computes the recognition candidates.
 
-### 2. Duplicate Compaction
+### 2. Descriptor Index
 
-Repeated registrations from the same image or nearly identical angles can slow inference and bias results. `matcher.js` treats descriptors closer than `duplicateDistance` as near-duplicates and compacts each person's descriptor set before building the index.
+Saved descriptors are stored as JSON arrays. `matcher.js` converts valid descriptors into `Float32Array` values and compacts near-duplicates. This keeps each person's descriptor set cleaner and reduces bias from repeated registrations of nearly identical faces.
 
-### 3. Representative Prototypes
+### 3. Representative Prototypes And Two-Stage Matching
 
-Instead of scanning every descriptor first, ASTRA builds up to 32 representative prototypes per person. It starts near the descriptor centroid, then keeps descriptors that cover farther variations, and refines cluster representatives. This keeps useful variation such as pose, lighting, and expression while reducing the first-pass search cost.
+Instead of scanning every descriptor first, ASTRA builds up to 32 representative prototypes per person. Input descriptors are compared against prototypes first, and only the top candidate people are re-scored against their full descriptor sets. This keeps matching practical in the browser as the dataset grows.
 
-### 4. Two-Stage Candidate Search
+### 4. Robust Distance
 
-For each input face, ASTRA first compares the descriptor against each person's prototypes. It then refines only the top candidate people against their full descriptor sets. This avoids repeatedly scanning every descriptor for every person and keeps matching practical as the dataset grows.
+Nearest-neighbor distance alone can be unstable when one noisy descriptor happens to be close. ASTRA combines the closest distance with the average of top distances and adds a consistency penalty. This robust distance makes candidate ranking less dependent on a single accidental match.
 
-### 5. Robust Distance
+### 5. JSON Persistence
 
-Nearest-neighbor distance alone can be unstable when a single noisy descriptor happens to be close. ASTRA combines the closest distance with the average of the top distances and adds a consistency penalty. This robust distance makes candidate ranking less dependent on one accidental match.
+People, descriptors, statistics, access settings, and sessions are stored as JSON. Writes use file locking so concurrent training saves are less likely to corrupt JSON files. Runtime JSON files should not be published as static assets; use `.htaccess` or equivalent web server rules to deny direct access.
 
-### 6. Why Browser-Only Matters
+### 6. Administration And Access
 
-- User images do not need to be sent to a server-side inference process
-- No GPU server or resident model worker is required
-- The app can run on ordinary PHP hosting
-- Recognition can be public while training and admin operations remain gated
-- Updating the descriptor JSON updates the browser-side inference data
+Admin login is configured through `.env`. Contributor training pages can be open, shared-password protected, or individual-user protected. Shared and contributor passwords are stored as hashes. Recognition can remain public while training and administration stay gated.
+
+### 7. Embedding API
+
+`astra-api.php` and `astra-embed.js` let existing same-origin pages call ASTRA. The API can be enabled or disabled from `admin.html`, and its scope can be set to recognition-only or recognition plus training saves. It is designed for same-server embedding, not cross-origin public API use.
 
 ## Pages
 
@@ -284,6 +360,8 @@ index.html               Public recognition page
 admin.html               Admin setup and management
 train-upload-image.html  Train from collaborator-uploaded local images
 train-from-image.html    Train from images uploaded by the admin
+astra-api.php            Same-origin embedding API
+astra-embed.js           Browser helper for existing pages
 ```
 
 ## Setup
@@ -331,6 +409,73 @@ users   Individual contributor users
 ```
 
 Contributor users and the shared password are stored in `data/access.json`. Passwords are saved with PHP `password_hash()`, not in plain text. Contributor users can receive upload-training and source-image-training permissions separately.
+
+## Embedding ASTRA API
+
+If ASTRA is installed under `/ASTRA/`, another page on the same server can load `astra-embed.js` and call ASTRA from an existing homepage, admin page, or custom workflow.
+
+First, enable **ASTRA API** in `admin.html`.
+
+```text
+Disabled           Do not expose the embedding API
+Recognition only   Allow descriptor loading and browser recognition
+Training allowed   Also allow descriptor saves from embedded pages
+```
+
+### Browser Recognition Example
+
+```html
+<input type="file" id="photo" accept="image/*">
+<pre id="result"></pre>
+
+<script src="/ASTRA/astra-embed.js"></script>
+<script>
+const astra = AstraEmbed.create({ basePath: '/ASTRA/' });
+
+document.getElementById('photo').addEventListener('change', async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  await astra.init();
+  const faces = await astra.recognizeImage(file);
+  document.getElementById('result').textContent = JSON.stringify(faces, null, 2);
+});
+</script>
+```
+
+`recognizeImage()` returns `box`, `score`, `descriptor`, and `candidates` for each detected face. The host page can render its own UI around that result.
+
+### Embedded Training Save Example
+
+Descriptor saves are only allowed when the admin sets ASTRA API scope to training.
+
+```js
+const faces = await astra.recognizeImage(file);
+await astra.saveDescriptor({
+  member: 'Alice',
+  descriptor: faces[0].descriptor,
+  sourceName: 'custom-admin-page'
+});
+```
+
+### Server-Side PHP Example
+
+For PHP code on the same server, include `astra-api.php` directly instead of using HTTP.
+
+```php
+<?php
+require_once __DIR__ . '/ASTRA/astra-api.php';
+
+$members = astra_api_members();
+$stats = astra_api_stats();
+```
+
+### Embedding API Limits
+
+- `astra-api.php` returns 403 unless enabled in `admin.html`
+- No CORS headers are emitted for external sites
+- Browser HTTP access is limited to same-origin requests
+- The API is not intended as a cross-origin public API
+- Descriptor saves require the training scope
 
 ## Training Workflows
 
@@ -391,6 +536,8 @@ uploads/source/*
 ├── admin.js
 ├── training.js
 ├── matcher.js
+├── astra-api.php
+├── astra-embed.js
 ├── api.php
 ├── style.css
 ├── data/
@@ -414,6 +561,7 @@ uploads/source/*
 - Do not publish runtime JSON files or uploaded source images as repository assets
 - Use HTTPS when contributor access is enabled
 - Because public recognition runs in the browser, descriptor data required for recognition is delivered to the browser through the API
+- Treat `astra-api.php` as a same-origin embedding API, not as a cross-origin public API
 
 ## License
 

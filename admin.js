@@ -69,7 +69,10 @@ function renderSettings(){
   document.getElementById('members-text').value = (adminState.members || []).map(row => row.name).join('\n');
   document.getElementById('upload-mode').value = adminState.access?.pages?.upload?.mode || 'shared';
   document.getElementById('from-image-mode').value = adminState.access?.pages?.from_image?.mode || 'shared';
+  document.getElementById('embed-enabled').checked = !!adminState.access?.embed?.enabled;
+  document.getElementById('embed-scope').value = adminState.access?.embed?.scope || 'recognition';
   setText('shared-status', adminState.access?.shared_ready ? `共通パスワード設定済み ${adminState.access.shared_updated_at || ''}` : '共通パスワードは未設定です。');
+  setEmbedStatus();
   renderUsers();
   renderSourceImages();
   renderStats();
@@ -118,6 +121,35 @@ async function saveAccessModes(){
   }catch(e){
     setText('access-status', e.message, true);
   }
+}
+
+async function saveEmbedSettings(){
+  setText('embed-status', '保存中...');
+  try{
+    const payload = {
+      enabled:document.getElementById('embed-enabled').checked,
+      scope:document.getElementById('embed-scope').value
+    };
+    const res = await fetch('./api.php?action=admin_save_embed', {
+      method:'POST',
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    const json = await readJson(res);
+    if(!res.ok || !json.ok) throw new Error(json.error || '保存できませんでした。');
+    adminState.access.embed = payload;
+    setEmbedStatus('ASTRA API設定を保存しました。');
+  }catch(e){
+    setText('embed-status', e.message, true);
+  }
+}
+
+function setEmbedStatus(prefix=''){
+  const embed = adminState?.access?.embed || {};
+  const state = embed.enabled ? '有効' : '無効';
+  const scope = embed.scope === 'training' ? '判定と学習保存' : '判定のみ';
+  setText('embed-status', `${prefix ? `${prefix} ` : ''}${state} / ${scope}`);
 }
 
 async function saveSharedPassword(){

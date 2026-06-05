@@ -99,6 +99,22 @@
     </section>
 
     <section class="panel">
+      <p class="label">ASTRA API</p>
+      <label class="toggle-row">
+        <input type="checkbox" id="embed-enabled">
+        <span>同一サーバー内の別ページからASTRA APIを利用できるようにする</span>
+      </label>
+      <label class="label admin-spaced" for="embed-scope">許可範囲</label>
+      <select class="select" id="embed-scope">
+        <option value="recognition">判定のみ</option>
+        <option value="training">判定と学習保存</option>
+      </select>
+      <button class="button primary" type="button" onclick="saveEmbedSettings()">ASTRA API設定を保存</button>
+      <p class="status" id="embed-status"></p>
+      <div class="empty-result admin-code">Endpoint: ./astra-api.php / Browser helper: ./astra-embed.js</div>
+    </section>
+
+    <section class="panel">
       <p class="label">Contributor Users</p>
       <div class="access-user-list" id="users-list"></div>
     </section>
@@ -119,6 +135,6 @@
     </section>
   </div>
 </main>
-<script src="./admin.js?v=20260605-oss-admin"></script>
+<script src="./admin.js?v=20260605-astra-api"></script>
 </body>
 </html>
