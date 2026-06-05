@@ -2,19 +2,217 @@
 
 ![ASTRA logo](assets/astra-logo.png)
 
+**English version is [here](#english).**
+
+**ASTRA** は **Adaptive Scalable Training Recognition Architecture** の略称です。
+
+ASTRAは、小規模コミュニティ向けのブラウザベース顔認識・学習データ管理OSSです。最大の特徴は、`matcher.js` によるブラウザのみで動く高速推論です。サーバー側で推論を実行せず、ブラウザ内で顔descriptorのインデックスを構築し、画像内の顔ごとに人物候補を即時に返します。
+
+## 特徴
+
+- `matcher.js` によるブラウザ完結の高速顔照合
+- サーバー推論・DB推論なしで動作
+- 128次元descriptorを `Float32Array` に変換して軽量に比較
+- 重複descriptorを圧縮し、照合対象を整理
+- 人物ごとに代表descriptorプロトタイプを構築
+- プロトタイプで高速に候補を絞り込み、上位候補だけを全descriptorで再評価
+- 最短距離だけに頼らない robust distance で安定した候補順を生成
+- 複数人画像でも顔ごとに候補を表示
+- 判定画面はログイン不要で公開可能
+- 初期設定と運用管理は `admin.html` に集約
+- 人物名の基本設定を `admin.html` から管理
+- アップロード画像学習: `train-upload-image.html`
+- 管理者が追加した画像からの学習: `train-from-image.html`
+- 学習ページごとに権限モードを設定可能
+- 共通パスワードまたは協力者ユーザーで学習権限を管理
+- 協力者パスワードはハッシュ化してJSON保存
+- ランタイムデータはローカルJSONで管理
+- `.htaccess` で学習データJSONの直アクセスを拒否
+- MySQL/PDO/DB依存なし
+- 外部 `../data` 依存なし
+- ブログ・仕分けワークフロー依存なし
+
+## ブラウザ高速推論
+
+ASTRAの照合コアは `matcher.js` です。学習済みdescriptorを読み込むと、ブラウザ上で人物ごとの軽量インデックスを作成します。
+
+処理の流れ:
+
+1. `data/descriptors.json` から人物ごとのdescriptorを読み込む
+2. descriptorを `Float32Array` に変換する
+3. 近すぎる重複descriptorを除外する
+4. 人物ごとに代表プロトタイプを最大32件まで作る
+5. 入力顔descriptorをまずプロトタイプと比較する
+6. 上位候補だけを元の全descriptorで再評価する
+7. robust distance で候補を並べ替える
+
+この二段階照合により、学習データが増えてもブラウザのみで実用的な速度を保ちやすくしています。顔検出とdescriptor抽出もブラウザ側の face-api.js で行うため、サーバーはJSON保存、設定、画像配信、権限確認に集中できます。
+
+## 画面
+
+```text
+index.html               公開判定画面
+admin.html               初期設定・管理画面
+train-upload-image.html  協力者がローカル画像から学習
+train-from-image.html    管理者が追加した画像から学習
+```
+
+## セットアップ
+
+1. `.env.example` を `.env` にコピーする
+2. 管理者認証情報を設定する
+3. `admin.html` を開く
+4. コミュニティの人物名を登録する
+5. 2つの学習ページの権限モードを選ぶ
+6. 必要に応じて共通パスワードまたは協力者ユーザーを作る
+7. 必要に応じて `train-from-image.html` 用の画像をアップロードする
+
+`.env` の例:
+
+```dotenv
+ASTRA_ADMIN_USERNAME=admin
+ASTRA_ADMIN_PASSWORD=change-this-password
+```
+
+本番ではパスワードハッシュの利用を推奨します。
+
+```bash
+php -r 'echo password_hash("your-password", PASSWORD_DEFAULT) . PHP_EOL;'
+```
+
+`.env`:
+
+```dotenv
+ASTRA_ADMIN_USERNAME=admin
+ASTRA_ADMIN_PASSWORD_HASH=$2y$10$...
+```
+
+`.env` は `.gitignore` 対象です。コミットしないでください。
+
+## 権限モデル
+
+`admin.html` は常に `.env` の管理者認証が必要です。
+
+判定画面 `index.html` はログイン不要です。
+
+各学習ページは `admin.html` から個別に設定できます。
+
+```text
+none    ログイン不要
+shared  共通パスワード
+users   協力者ユーザー
+```
+
+共通パスワードと協力者ユーザーは `data/access.json` に保存されます。パスワードは平文ではなくPHPの `password_hash()` で保存されます。
+
+## 学習ワークフロー
+
+### `train-upload-image.html`
+
+協力者がローカル画像を選択します。画像はブラウザ内で解析され、APIへ送信されるのは顔descriptorと選択した人物名だけです。画像ファイル本体は保存しません。
+
+### `train-from-image.html`
+
+管理者が `admin.html` から学習用画像を追加します。協力者は `train-from-image.html` でそれらの画像を順番に確認し、顔ごとに人物名を設定します。画像は `uploads/source/` に保存されますが、直接アクセスは `.htaccess` で拒否し、API経由で権限確認後に配信します。
+
+## ランタイムデータ
+
+以下のJSONは実行時に自動生成されます。
+
+```text
+data/descriptors.json  人物名ごとの顔descriptor
+data/stats.json        人物ごとの登録数と最終更新日
+data/members.json      人物名の基本設定
+data/access.json       協力者権限とパスワードハッシュ
+data/sessions.json     ログインセッション
+```
+
+`data/.htaccess` はJSONファイルへの直アクセスを拒否します。Apache以外では同等の拒否設定を行ってください。
+
+## Git管理
+
+以下はGit管理しません。
+
+```text
+.env
+.env.*
+data/*.json
+uploads/train/*
+uploads/source/*
+```
+
+`uploads/source/.htaccess` と `.gitkeep` はコミットしますが、アップロードされた画像はコミットしません。
+
+## ディレクトリ構成
+
+```text
+.
+├── index.html
+├── admin.html
+├── train-upload-image.html
+├── train-from-image.html
+├── app.js
+├── admin.js
+├── training.js
+├── matcher.js
+├── api.php
+├── style.css
+├── data/
+│   └── .htaccess
+├── uploads/
+│   ├── train/
+│   │   └── .gitkeep
+│   └── source/
+│       ├── .gitkeep
+│       └── .htaccess
+├── assets/
+└── icon/
+```
+
+## リリース
+
+リリースノートは [CHANGELOG.md](CHANGELOG.md) を参照してください。
+
+## セキュリティ
+
+- `.env` はバージョン管理に含めない
+- 本番では `ASTRA_ADMIN_PASSWORD_HASH` の利用を推奨
+- Apacheでは `data/.htaccess` と `uploads/source/.htaccess` を有効にする
+- Nginxなどでは同等のアクセス拒否設定を行う
+- ランタイムJSONやアップロード画像を公開アセットとして配布しない
+- 協力者権限を使う場合はHTTPSで運用する
+
+## ライセンス
+
+MIT License. See [LICENSE](LICENSE).
+
+---
+
+<a id="english"></a>
+
+# ASTRA
+
+![ASTRA logo](assets/astra-logo.png)
+
 **ASTRA** is **Adaptive Scalable Training Recognition Architecture**.
 
-ASTRA is a browser-based face recognition and training-data management app for small communities. It detects faces in images, compares them with locally collected face descriptors, and helps collaborators build training data without requiring a database or a community-specific data source.
+ASTRA is a browser-based face recognition and training-data management app for small communities. Its main selling point is fast browser-only inference powered by `matcher.js`. ASTRA does not need server-side inference: it builds a face descriptor index in the browser and returns person candidates for each detected face directly on the client.
 
-## Features
+## Highlights
 
-- Public image recognition page
-- Browser-side face detection and descriptor extraction with face-api.js
-- Per-face candidate display for multi-person images
-- Admin page for initial setup and runtime management
-- Member/person name management from `admin.html`
-- Uploaded-image training workflow: `train-upload-image.html`
-- Admin-provided source-image training workflow: `train-from-image.html`
+- Fast browser-only face matching with `matcher.js`
+- No server-side inference or database-backed inference
+- Lightweight descriptor comparison with 128-dimensional `Float32Array` values
+- Duplicate descriptor compaction
+- Per-person descriptor prototype generation
+- Two-stage candidate search: fast prototype scan, then refined full-descriptor scoring for top candidates
+- Stable candidate ranking with robust distance instead of nearest-neighbor distance alone
+- Per-face candidates for multi-person images
+- Public recognition page with no login requirement
+- Initial setup and operations centralized in `admin.html`
+- Person/member names managed from `admin.html`
+- Upload-image training: `train-upload-image.html`
+- Admin-provided source-image training: `train-from-image.html`
 - Separate access mode per training page
 - Shared-password or individual contributor-user access
 - Contributor passwords stored as hashes in JSON
@@ -24,9 +222,21 @@ ASTRA is a browser-based face recognition and training-data management app for s
 - No external `../data` dependency
 - No blog/sorting workflow dependency
 
-## Releases
+## Fast Browser Inference
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes.
+ASTRA's matching core is `matcher.js`. When descriptor data is loaded, it builds a lightweight per-person index in the browser.
+
+Pipeline:
+
+1. Load descriptors from `data/descriptors.json`
+2. Convert descriptor arrays into `Float32Array`
+3. Remove near-duplicate descriptors
+4. Build up to 32 representative prototypes per person
+5. Compare an input face descriptor against prototypes first
+6. Re-score only top candidates against full descriptors
+7. Sort candidates with robust distance
+
+This two-stage matching design keeps inference practical in the browser as training data grows. Face detection and descriptor extraction also run in the browser with face-api.js, so the server only handles JSON storage, settings, image delivery, and access checks.
 
 ## Pages
 
@@ -116,11 +326,7 @@ Runtime files and secrets are ignored:
 ```text
 .env
 .env.*
-data/descriptors.json
-data/stats.json
-data/members.json
-data/access.json
-data/sessions.json
+data/*.json
 uploads/train/*
 uploads/source/*
 ```
@@ -153,45 +359,9 @@ uploads/source/*
 └── icon/
 ```
 
-## API Overview
+## Releases
 
-Public:
-
-```text
-GET  api.php?action=public_config
-GET  api.php?action=members
-GET  api.php?action=descriptors
-GET  api.php?action=stats
-```
-
-Admin:
-
-```text
-POST api.php?action=admin_login
-POST api.php?action=admin_logout
-GET  api.php?action=admin_me
-GET  api.php?action=admin_settings
-POST api.php?action=admin_save_members
-POST api.php?action=admin_save_access
-POST api.php?action=admin_set_shared_password
-POST api.php?action=admin_save_user
-POST api.php?action=admin_delete_user
-POST api.php?action=admin_upload_source_images
-POST api.php?action=admin_delete_source_image
-POST api.php?action=reset_member_descriptors
-```
-
-Contributor/training:
-
-```text
-GET  api.php?action=access_me&page=upload
-GET  api.php?action=access_me&page=from_image
-POST api.php?action=contributor_login
-POST api.php?action=contributor_logout
-GET  api.php?action=source_images
-GET  api.php?action=source_image&id=...
-POST api.php?action=save_descriptor
-```
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Security Notes
 
