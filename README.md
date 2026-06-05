@@ -24,6 +24,10 @@ ASTRA is a browser-based face recognition and training-data management app for s
 - No external `../data` dependency
 - No blog/sorting workflow dependency
 
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Pages
 
 ```text
