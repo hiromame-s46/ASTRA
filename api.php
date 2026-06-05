@@ -6,47 +6,66 @@ header('X-Content-Type-Options: nosniff');
 $baseDir = __DIR__;
 $dataDir = $baseDir . '/data';
 $uploadDir = $baseDir . '/uploads/train';
+$sourceDir = $baseDir . '/uploads/source';
 $descriptorFile = $dataDir . '/descriptors.json';
 $statsFile = $dataDir . '/stats.json';
-$sortAccessFile = $dataDir . '/sort_access.json';
-$imageAccessFile = $dataDir . '/image_access.json';
-const ADMIN_USER_ID = 1;
+$membersFile = $dataDir . '/members.json';
+$accessFile = $dataDir . '/access.json';
+$sessionsFile = $dataDir . '/sessions.json';
 
 if (!is_dir($dataDir)) mkdir($dataDir, 0775, true);
 if (!is_dir($uploadDir)) mkdir($uploadDir, 0775, true);
-if (!file_exists($descriptorFile)) file_put_contents($descriptorFile, "{}\n");
-if (!file_exists($statsFile)) file_put_contents($statsFile, "{}\n");
-if (!file_exists($sortAccessFile)) write_json_locked($sortAccessFile, default_sort_access());
-if (!file_exists($imageAccessFile)) write_json_locked($imageAccessFile, default_sort_access());
+if (!is_dir($sourceDir)) mkdir($sourceDir, 0775, true);
+if (!file_exists($descriptorFile)) write_json_locked($descriptorFile, []);
+if (!file_exists($statsFile)) write_json_locked($statsFile, []);
+if (!file_exists($membersFile)) write_json_locked($membersFile, []);
+if (!file_exists($accessFile)) write_json_locked($accessFile, default_access());
+if (!file_exists($sessionsFile)) write_json_locked($sessionsFile, []);
 cleanup_uploads($uploadDir);
+load_env($baseDir . '/.env');
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
 try {
     match ($action) {
-        'auth_me' => send_json(['ok' => true, 'data' => current_auth_user()]),
-        'auth_login' => auth_login(),
-        'auth_logout' => auth_logout(),
-        'sort_access_me' => sort_access_me($sortAccessFile),
-        'sort_access_list' => sort_access_list($sortAccessFile),
-        'sort_access_mode' => sort_access_mode($sortAccessFile),
-        'sort_access_save' => sort_access_save($sortAccessFile),
-        'sort_access_delete' => sort_access_delete($sortAccessFile),
-        'image_access_me' => image_access_me($imageAccessFile),
-        'image_access_list' => image_access_list($imageAccessFile),
-        'image_access_mode' => image_access_mode($imageAccessFile),
-        'image_access_save' => image_access_save($imageAccessFile),
-        'image_access_delete' => image_access_delete($imageAccessFile),
+        'public_config' => public_config($membersFile, $accessFile),
+        'members' => send_json(['ok' => true, 'data' => normalize_members(read_json($membersFile))]),
         'descriptors' => send_json(read_json($descriptorFile)),
         'stats' => send_json(build_stats($descriptorFile)),
-        'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir),
-        'delete_descriptors' => delete_descriptors($descriptorFile, $statsFile, $uploadDir),
+        'admin_me' => admin_me(),
+        'admin_login' => admin_login($sessionsFile),
+        'admin_logout' => logout($sessionsFile),
+        'admin_settings' => admin_settings($membersFile, $accessFile, $descriptorFile, $sourceDir),
+        'admin_save_members' => admin_save_members($membersFile),
+        'admin_save_access' => admin_save_access($accessFile),
+        'admin_set_shared_password' => admin_set_shared_password($accessFile),
+        'admin_save_user' => admin_save_user($accessFile),
+        'admin_delete_user' => admin_delete_user($accessFile),
+        'admin_upload_source_images' => admin_upload_source_images($sourceDir),
+        'admin_delete_source_image' => admin_delete_source_image($sourceDir),
         'reset_member_descriptors' => reset_member_descriptors($descriptorFile, $statsFile, $uploadDir),
-        'proxy_image' => proxy_image(),
-        default => send_json(['error' => 'unknown action'], 404),
+        'access_me' => access_me($accessFile, $sessionsFile),
+        'contributor_login' => contributor_login($accessFile, $sessionsFile),
+        'contributor_logout' => logout($sessionsFile),
+        'source_images' => source_images($accessFile, $sessionsFile, $sourceDir),
+        'source_image' => source_image($accessFile, $sessionsFile, $sourceDir),
+        'save_descriptor' => save_descriptor($descriptorFile, $statsFile, $uploadDir, $accessFile, $sessionsFile),
+        default => send_json(['ok' => false, 'error' => 'unknown action'], 404),
     };
 } catch (Throwable $e) {
-    send_json(['error' => $e->getMessage()], 500);
+    send_json(['ok' => false, 'error' => $e->getMessage()], 500);
+}
+
+function load_env(string $path): void {
+    if (!is_file($path)) return;
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) continue;
+        [$key, $value] = explode('=', $line, 2);
+        $key = trim($key);
+        $value = trim($value, " \t\n\r\0\x0B\"'");
+        if ($key !== '' && getenv($key) === false) putenv($key . '=' . $value);
+    }
 }
 
 function read_json(string $path): array {
@@ -59,10 +78,6 @@ function read_json(string $path): array {
         flock($fp, LOCK_UN);
         fclose($fp);
     }
-    return decode_json_array($raw ?: '{}');
-}
-
-function decode_json_array(string $raw): array {
     $json = json_decode($raw ?: '{}', true);
     return is_array($json) ? $json : [];
 }
@@ -74,8 +89,7 @@ function write_json_locked(string $path, array $data): void {
         flock($fp, LOCK_EX);
         ftruncate($fp, 0);
         rewind($fp);
-        $json = $data === [] ? '{}' : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        fwrite($fp, $json . "\n");
+        fwrite($fp, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n");
         fflush($fp);
     } finally {
         flock($fp, LOCK_UN);
@@ -89,16 +103,13 @@ function mutate_json_locked(string $path, callable $mutator, ?callable $afterWri
     try {
         flock($fp, LOCK_EX);
         rewind($fp);
-        $raw = stream_get_contents($fp);
-        $data = decode_json_array($raw ?: '{}');
+        $json = json_decode(stream_get_contents($fp) ?: '{}', true);
+        $data = is_array($json) ? $json : [];
         $next = $mutator($data);
-        if (!is_array($next)) {
-            throw new RuntimeException('json mutator returned invalid data');
-        }
+        if (!is_array($next)) throw new RuntimeException('json mutator returned invalid data');
         ftruncate($fp, 0);
         rewind($fp);
-        $encoded = $next === [] ? '{}' : json_encode($next, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        fwrite($fp, $encoded . "\n");
+        fwrite($fp, json_encode($next, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n");
         fflush($fp);
         if ($afterWrite) $afterWrite($next);
         return $next;
@@ -115,6 +126,87 @@ function send_json(array $data, int $status = 200): never {
     exit;
 }
 
+function request_json(): array {
+    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
+    return is_array($payload) ? $payload : [];
+}
+
+function default_access(): array {
+    return [
+        'pages' => [
+            'upload' => ['mode' => 'shared'],
+            'from_image' => ['mode' => 'shared'],
+        ],
+        'shared' => ['password_hash' => '', 'updated_at' => ''],
+        'users' => [],
+    ];
+}
+
+function normalize_access(array $data): array {
+    $default = default_access();
+    $pages = $data['pages'] ?? [];
+    foreach (['upload', 'from_image'] as $page) {
+        $mode = (string)($pages[$page]['mode'] ?? $default['pages'][$page]['mode']);
+        if (!in_array($mode, ['none', 'shared', 'users'], true)) $mode = 'shared';
+        $default['pages'][$page]['mode'] = $mode;
+    }
+    $shared = $data['shared'] ?? [];
+    if (is_array($shared)) {
+        $default['shared']['password_hash'] = (string)($shared['password_hash'] ?? '');
+        $default['shared']['updated_at'] = (string)($shared['updated_at'] ?? '');
+    }
+    $users = $data['users'] ?? [];
+    if (is_array($users)) {
+        foreach ($users as $row) {
+            if (!is_array($row)) continue;
+            $id = (string)($row['id'] ?? '');
+            if ($id === '') $id = bin2hex(random_bytes(8));
+            $default['users'][$id] = [
+                'id' => $id,
+                'username' => trim((string)($row['username'] ?? '')),
+                'display_name' => trim((string)($row['display_name'] ?? '')),
+                'password_hash' => (string)($row['password_hash'] ?? ''),
+                'status' => ((string)($row['status'] ?? 'active') === 'paused') ? 'paused' : 'active',
+                'permissions' => [
+                    'upload' => !empty($row['permissions']['upload']),
+                    'from_image' => !empty($row['permissions']['from_image']),
+                ],
+                'created_at' => (string)($row['created_at'] ?? ''),
+                'updated_at' => (string)($row['updated_at'] ?? ''),
+            ];
+        }
+    }
+    uasort($default['users'], static fn($a, $b) => strcmp($a['username'], $b['username']));
+    return $default;
+}
+
+function normalize_members(array $data): array {
+    $rows = array_values($data);
+    $next = [];
+    foreach ($rows as $row) {
+        if (is_string($row)) $row = ['name' => $row];
+        if (!is_array($row)) continue;
+        $name = trim((string)($row['name'] ?? ''));
+        if ($name === '') continue;
+        $next[] = [
+            'id' => trim((string)($row['id'] ?? slug_member($name))),
+            'name' => $name,
+            'group' => trim((string)($row['group'] ?? '')),
+            'active' => !array_key_exists('active', $row) || (bool)$row['active'],
+        ];
+    }
+    return array_values(array_filter($next, static function ($row) use (&$seen): bool {
+        $seen ??= [];
+        if (isset($seen[$row['name']])) return false;
+        $seen[$row['name']] = true;
+        return true;
+    }));
+}
+
+function slug_member(string $name): string {
+    return strtolower(trim(preg_replace('/[^A-Za-z0-9]+/', '-', $name), '-')) ?: bin2hex(random_bytes(4));
+}
+
 function build_stats(string $descriptorFile): array {
     return build_stats_from_data(read_json($descriptorFile));
 }
@@ -128,98 +220,291 @@ function build_stats_from_data(array $data): array {
             $created = is_array($row) ? (string)($row['created_at'] ?? '') : '';
             if ($created > $latest) $latest = $created;
         }
-        $stats[$member] = [
-            'count' => count($rows),
-            'updated_at' => $latest,
-        ];
+        $stats[$member] = ['count' => count($rows), 'updated_at' => $latest];
     }
     ksort($stats, SORT_NATURAL);
     return $stats;
 }
 
-function default_sort_access(): array {
-    return [
-        'mode' => 'limited',
-        'users' => [
-            '1' => [
-                'user_id' => 1,
-                'username' => 'hiromame',
-                'display_name' => 'hiromame',
-                'status' => 'active',
-                'created_at' => gmdate('c'),
-                'updated_at' => gmdate('c'),
-            ],
-        ],
-    ];
+function admin_configured(): bool {
+    return (string)getenv('ASTRA_ADMIN_USERNAME') !== ''
+        && ((string)getenv('ASTRA_ADMIN_PASSWORD') !== '' || (string)getenv('ASTRA_ADMIN_PASSWORD_HASH') !== '');
 }
 
-function normalize_sort_access(array $data): array {
-    $mode = ((string)($data['mode'] ?? 'limited') === 'all') ? 'all' : 'limited';
-    $users = $data['users'] ?? [];
-    if (!is_array($users)) $users = [];
-    $next = [];
-    foreach ($users as $key => $row) {
-        if (!is_array($row)) continue;
-        $id = (int)($row['user_id'] ?? $key);
-        if ($id <= 0) continue;
-        $next[(string)$id] = [
-            'user_id' => $id,
-            'username' => (string)($row['username'] ?? ''),
-            'display_name' => (string)($row['display_name'] ?? ''),
-            'status' => ((string)($row['status'] ?? 'active') === 'paused') ? 'paused' : 'active',
-            'created_at' => (string)($row['created_at'] ?? ''),
-            'updated_at' => (string)($row['updated_at'] ?? ''),
-        ];
+function admin_me(): never {
+    $session = current_session();
+    send_json(['ok' => true, 'data' => [
+        'configured' => admin_configured(),
+        'admin' => $session && ($session['type'] ?? '') === 'admin',
+    ]]);
+}
+
+function admin_login(string $sessionsFile): never {
+    $payload = request_json();
+    $username = trim((string)($payload['username'] ?? ''));
+    $password = (string)($payload['password'] ?? '');
+    if (!admin_configured()) send_json(['ok' => false, 'error' => '.envに管理者設定がありません。'], 503);
+    if ($username !== (string)getenv('ASTRA_ADMIN_USERNAME') || !verify_admin_password($password)) {
+        send_json(['ok' => false, 'error' => '管理者ログインに失敗しました。'], 401);
     }
-    ksort($next, SORT_NATURAL);
-    return ['mode' => $mode, 'users' => $next];
+    create_session($sessionsFile, ['type' => 'admin', 'name' => $username]);
+    send_json(['ok' => true]);
 }
 
-function sort_access_rows(string $sortAccessFile): array {
-    return array_values(normalize_sort_access(read_json($sortAccessFile))['users']);
+function verify_admin_password(string $password): bool {
+    $hash = (string)getenv('ASTRA_ADMIN_PASSWORD_HASH');
+    if ($hash !== '') return password_verify($password, $hash);
+    return hash_equals((string)getenv('ASTRA_ADMIN_PASSWORD'), $password);
 }
 
-function sort_access_state(string $sortAccessFile): array {
-    $access = normalize_sort_access(read_json($sortAccessFile));
-    return [
-        'mode' => $access['mode'],
-        'users' => array_values($access['users']),
-    ];
+function current_session(): ?array {
+    global $sessionsFile;
+    $token = $_COOKIE['astra_oss_session'] ?? '';
+    if (!is_string($token) || $token === '') return null;
+    $sessions = read_json($sessionsFile);
+    $row = $sessions[$token] ?? null;
+    if (!is_array($row) || (int)($row['expires'] ?? 0) < time()) return null;
+    return $row;
 }
 
-function is_sort_allowed(array $user, string $sortAccessFile): bool {
-    $id = (string)(int)($user['id'] ?? 0);
-    if ($id === '0') return false;
-    $access = normalize_sort_access(read_json($sortAccessFile));
-    if (($access['mode'] ?? 'limited') === 'all') return true;
-    $row = $access['users'][$id] ?? null;
-    return is_array($row) && ($row['status'] ?? '') === 'active';
+function create_session(string $sessionsFile, array $row): void {
+    $token = bin2hex(random_bytes(32));
+    $row['created_at'] = gmdate('c');
+    $row['expires'] = time() + 30 * 86400;
+    mutate_json_locked($sessionsFile, static function (array $sessions) use ($token, $row): array {
+        foreach ($sessions as $key => $session) {
+            if (!is_array($session) || (int)($session['expires'] ?? 0) < time()) unset($sessions[$key]);
+        }
+        $sessions[$token] = $row;
+        return $sessions;
+    });
+    setcookie('astra_oss_session', $token, [
+        'expires' => $row['expires'],
+        'path' => '/',
+        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
 }
 
-function save_descriptor(string $descriptorFile, string $statsFile, string $uploadDir): never {
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['error' => 'invalid json'], 400);
-    enforce_save_auth($payload);
+function logout(string $sessionsFile): never {
+    $token = $_COOKIE['astra_oss_session'] ?? '';
+    if (is_string($token) && $token !== '') {
+        mutate_json_locked($sessionsFile, static function (array $sessions) use ($token): array {
+            unset($sessions[$token]);
+            return $sessions;
+        });
+    }
+    setcookie('astra_oss_session', '', ['expires' => time() - 3600, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
+    send_json(['ok' => true]);
+}
 
+function require_admin(): void {
+    $session = current_session();
+    if (!$session || ($session['type'] ?? '') !== 'admin') send_json(['ok' => false, 'error' => 'admin login required'], 401);
+}
+
+function public_config(string $membersFile, string $accessFile): never {
+    $access = normalize_access(read_json($accessFile));
+    send_json(['ok' => true, 'data' => [
+        'members' => normalize_members(read_json($membersFile)),
+        'access' => [
+            'upload' => ['mode' => $access['pages']['upload']['mode'], 'shared_ready' => $access['shared']['password_hash'] !== ''],
+            'from_image' => ['mode' => $access['pages']['from_image']['mode'], 'shared_ready' => $access['shared']['password_hash'] !== ''],
+        ],
+    ]]);
+}
+
+function admin_settings(string $membersFile, string $accessFile, string $descriptorFile, string $sourceDir): never {
+    require_admin();
+    $access = normalize_access(read_json($accessFile));
+    $users = array_values(array_map(static function ($row) {
+        unset($row['password_hash']);
+        return $row;
+    }, $access['users']));
+    send_json(['ok' => true, 'data' => [
+        'members' => normalize_members(read_json($membersFile)),
+        'access' => [
+            'pages' => $access['pages'],
+            'shared_ready' => $access['shared']['password_hash'] !== '',
+            'shared_updated_at' => $access['shared']['updated_at'],
+            'users' => $users,
+        ],
+        'stats' => build_stats($descriptorFile),
+        'source_images' => list_source_images($sourceDir),
+    ]]);
+}
+
+function admin_save_members(string $membersFile): never {
+    require_admin();
+    $payload = request_json();
+    write_json_locked($membersFile, normalize_members($payload['members'] ?? []));
+    send_json(['ok' => true, 'data' => normalize_members(read_json($membersFile))]);
+}
+
+function admin_save_access(string $accessFile): never {
+    require_admin();
+    $payload = request_json();
+    $pages = $payload['pages'] ?? [];
+    mutate_json_locked($accessFile, static function (array $data) use ($pages): array {
+        $access = normalize_access($data);
+        foreach (['upload', 'from_image'] as $page) {
+            $mode = (string)($pages[$page]['mode'] ?? $access['pages'][$page]['mode']);
+            if (in_array($mode, ['none', 'shared', 'users'], true)) $access['pages'][$page]['mode'] = $mode;
+        }
+        return $access;
+    });
+    send_json(['ok' => true]);
+}
+
+function admin_set_shared_password(string $accessFile): never {
+    require_admin();
+    $password = (string)(request_json()['password'] ?? '');
+    if (strlen($password) < 8) send_json(['ok' => false, 'error' => '共通パスワードは8文字以上にしてください。'], 400);
+    mutate_json_locked($accessFile, static function (array $data) use ($password): array {
+        $access = normalize_access($data);
+        $access['shared']['password_hash'] = password_hash($password, PASSWORD_DEFAULT);
+        $access['shared']['updated_at'] = gmdate('c');
+        return $access;
+    });
+    send_json(['ok' => true]);
+}
+
+function admin_save_user(string $accessFile): never {
+    require_admin();
+    $payload = request_json();
+    $username = trim((string)($payload['username'] ?? ''));
+    if ($username === '') send_json(['ok' => false, 'error' => 'ユーザー名を入力してください。'], 400);
+    $id = trim((string)($payload['id'] ?? ''));
+    $password = (string)($payload['password'] ?? '');
+    $current = normalize_access(read_json($accessFile));
+    if ($id === '' && $password === '') send_json(['ok' => false, 'error' => '新規ユーザーにはパスワードが必要です。'], 400);
+    if ($id !== '' && !isset($current['users'][$id])) send_json(['ok' => false, 'error' => '更新対象のユーザーが見つかりません。'], 404);
+    $now = gmdate('c');
+    mutate_json_locked($accessFile, static function (array $data) use ($payload, $username, $id, $password, $now): array {
+        $access = normalize_access($data);
+        $targetId = $id !== '' ? $id : bin2hex(random_bytes(8));
+        $existing = $access['users'][$targetId] ?? [];
+        $access['users'][$targetId] = [
+            'id' => $targetId,
+            'username' => $username,
+            'display_name' => trim((string)($payload['display_name'] ?? $username)),
+            'password_hash' => $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : (string)($existing['password_hash'] ?? ''),
+            'status' => ((string)($payload['status'] ?? 'active') === 'paused') ? 'paused' : 'active',
+            'permissions' => [
+                'upload' => !empty($payload['permissions']['upload']),
+                'from_image' => !empty($payload['permissions']['from_image']),
+            ],
+            'created_at' => (string)($existing['created_at'] ?? $now),
+            'updated_at' => $now,
+        ];
+        return $access;
+    });
+    send_json(['ok' => true]);
+}
+
+function admin_delete_user(string $accessFile): never {
+    require_admin();
+    $id = trim((string)(request_json()['id'] ?? ''));
+    mutate_json_locked($accessFile, static function (array $data) use ($id): array {
+        $access = normalize_access($data);
+        unset($access['users'][$id]);
+        return $access;
+    });
+    send_json(['ok' => true]);
+}
+
+function access_me(string $accessFile, string $sessionsFile): never {
+    $page = normalize_page((string)($_GET['page'] ?? 'upload'));
+    $access = normalize_access(read_json($accessFile));
+    $mode = $access['pages'][$page]['mode'];
+    $session = current_session();
+    $allowed = false;
+    $user = null;
+    if ($mode === 'none') $allowed = true;
+    if ($session && ($session['type'] ?? '') === 'admin') {
+        $allowed = true;
+        $user = ['type' => 'admin', 'name' => $session['name'] ?? 'admin'];
+    } elseif ($session && ($session['type'] ?? '') === 'shared' && (($session['page'] ?? '') === $page || ($session['page'] ?? '') === 'all')) {
+        $allowed = true;
+        $user = ['type' => 'shared', 'name' => 'shared'];
+    } elseif ($session && ($session['type'] ?? '') === 'user') {
+        $row = $access['users'][$session['id'] ?? ''] ?? null;
+        if (is_array($row) && ($row['status'] ?? '') === 'active' && !empty($row['permissions'][$page])) {
+            $allowed = true;
+            $user = ['type' => 'user', 'name' => $row['display_name'] ?: $row['username']];
+        }
+    }
+    send_json(['ok' => true, 'data' => ['page' => $page, 'mode' => $mode, 'allowed' => $allowed, 'user' => $user]]);
+}
+
+function contributor_login(string $accessFile, string $sessionsFile): never {
+    $payload = request_json();
+    $page = normalize_page((string)($payload['page'] ?? 'upload'));
+    $access = normalize_access(read_json($accessFile));
+    $mode = $access['pages'][$page]['mode'];
+    if ($mode === 'none') {
+        create_session($sessionsFile, ['type' => 'shared', 'page' => $page]);
+        send_json(['ok' => true]);
+    }
+    if ($mode === 'shared') {
+        $password = (string)($payload['password'] ?? '');
+        $hash = $access['shared']['password_hash'];
+        if ($hash === '' || !password_verify($password, $hash)) send_json(['ok' => false, 'error' => 'パスワードが違います。'], 401);
+        create_session($sessionsFile, ['type' => 'shared', 'page' => $page]);
+        send_json(['ok' => true]);
+    }
+    $username = trim((string)($payload['username'] ?? ''));
+    $password = (string)($payload['password'] ?? '');
+    foreach ($access['users'] as $row) {
+        if (($row['username'] ?? '') !== $username) continue;
+        if (($row['status'] ?? '') !== 'active' || empty($row['permissions'][$page]) || !password_verify($password, (string)$row['password_hash'])) break;
+        create_session($sessionsFile, ['type' => 'user', 'id' => $row['id'], 'page' => $page]);
+        send_json(['ok' => true]);
+    }
+    send_json(['ok' => false, 'error' => 'ログインできませんでした。'], 401);
+}
+
+function normalize_page(string $page): string {
+    return $page === 'from_image' ? 'from_image' : 'upload';
+}
+
+function ensure_training_access(string $page, string $accessFile, string $sessionsFile): void {
+    ob_start();
+    access_me($accessFile, $sessionsFile);
+}
+
+function is_training_allowed(string $page, string $accessFile): bool {
+    $access = normalize_access(read_json($accessFile));
+    $mode = $access['pages'][$page]['mode'];
+    if ($mode === 'none') return true;
+    $session = current_session();
+    if ($session && ($session['type'] ?? '') === 'admin') return true;
+    if ($session && ($session['type'] ?? '') === 'shared' && (($session['page'] ?? '') === $page || ($session['page'] ?? '') === 'all')) return true;
+    if ($session && ($session['type'] ?? '') === 'user') {
+        $row = $access['users'][$session['id'] ?? ''] ?? null;
+        return is_array($row) && ($row['status'] ?? '') === 'active' && !empty($row['permissions'][$page]);
+    }
+    return false;
+}
+
+function save_descriptor(string $descriptorFile, string $statsFile, string $uploadDir, string $accessFile, string $sessionsFile): never {
+    $payload = request_json();
+    $source = (string)($payload['source'] ?? 'upload');
+    $page = $source === 'from_image' ? 'from_image' : 'upload';
+    if (!is_training_allowed($page, $accessFile)) send_json(['ok' => false, 'error' => 'access denied'], 403);
     $member = trim((string)($payload['member'] ?? ''));
     $descriptor = $payload['descriptor'] ?? null;
-    if ($member === '') send_json(['error' => 'member is required'], 400);
-    if (!is_array($descriptor) || count($descriptor) !== 128) send_json(['error' => 'descriptor is invalid'], 400);
+    if ($member === '') send_json(['ok' => false, 'error' => 'member is required'], 400);
+    if (!is_array($descriptor) || count($descriptor) !== 128) send_json(['ok' => false, 'error' => 'descriptor is invalid'], 400);
 
-    $descriptor = array_map(static fn($v) => round((float)$v, 8), $descriptor);
-    $now = gmdate('c');
-    $id = bin2hex(random_bytes(12));
     $row = [
-        'id' => $id,
-        'descriptor' => $descriptor,
-        'source' => trim((string)($payload['source'] ?? 'manual')),
-        'source_url' => trim((string)($payload['source_url'] ?? '')),
-        'blog_link' => trim((string)($payload['blog_link'] ?? '')),
-        'blog_date' => trim((string)($payload['blog_date'] ?? '')),
-        'blog_member' => trim((string)($payload['blog_member'] ?? '')),
-        'created_at' => $now,
+        'id' => bin2hex(random_bytes(12)),
+        'descriptor' => array_map(static fn($v) => round((float)$v, 8), $descriptor),
+        'source' => $page,
+        'source_name' => trim((string)($payload['source_name'] ?? '')),
+        'created_at' => gmdate('c'),
     ];
-
     $count = 0;
     mutate_json_locked(
         $descriptorFile,
@@ -233,281 +518,20 @@ function save_descriptor(string $descriptorFile, string $statsFile, string $uplo
             write_json_locked($statsFile, build_stats_from_data($data));
         }
     );
-
     cleanup_uploads($uploadDir);
-    send_json(['ok' => true, 'id' => $id, 'member' => $member, 'count' => $count]);
+    send_json(['ok' => true, 'member' => $member, 'count' => $count]);
 }
 
-function auth_db(): PDO {
-    static $pdo = null;
-    if ($pdo) return $pdo;
-    $configPath = auth_config_path();
-    if (!is_file($configPath)) throw new RuntimeException('auth config is missing');
-    $config = require $configPath;
-    $dsn = sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $config['host'], $config['dbname']);
-    $pdo = new PDO($dsn, $config['username'], $config['password'], [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-        PDO::ATTR_TIMEOUT => 5,
-    ]);
-    return $pdo;
-}
-
-function auth_config_path(): string {
-    $envPath = getenv('ASTRA_AUTH_CONFIG');
-    if ($envPath && is_file($envPath)) return $envPath;
-
-    $candidates = [
-        __DIR__ . '/../api/config.php',
-        __DIR__ . '/../../api/config.php',
-        __DIR__ . '/../../../api/config.php',
-        __DIR__ . '/../../../../api/config.php',
-    ];
-    foreach ($candidates as $path) {
-        if (is_file($path)) return $path;
-    }
-    return $envPath ?: __DIR__ . '/../../../../api/config.php';
-}
-
-function auth_token(): ?string {
-    $h = $_SERVER['HTTP_X_SESSION_TOKEN']
-      ?? $_SERVER['HTTP_AUTHORIZATION']
-      ?? ($_COOKIE['astra_token'] ?? null)
-      ?? ($_COOKIE['sakulabo_token'] ?? null);
-    if (!$h) return null;
-    return preg_replace('/^Bearer\s+/i', '', trim($h));
-}
-
-function set_auth_cookie(string $token): void {
-    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-    $options = [
-        'expires' => time() + 720 * 3600,
-        'path' => '/',
-        'secure' => $secure,
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ];
-    setcookie('astra_token', $token, $options);
-    setcookie('sakulabo_token', $token, $options);
-}
-
-function clear_auth_cookie(): void {
-    $options = [
-        'expires' => time() - 3600,
-        'path' => '/',
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ];
-    setcookie('astra_token', '', $options);
-    setcookie('sakulabo_token', '', $options);
-}
-
-function auth_login(): never {
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
-    $username = trim((string)($payload['username'] ?? ''));
-    $password = (string)($payload['password'] ?? '');
-    if ($username === '' || $password === '') {
-        send_json(['ok' => false, 'error' => 'ユーザー名とパスワードを入力してください。'], 400);
-    }
-
-    $st = auth_db()->prepare('SELECT * FROM sakulabo_users WHERE username = ? LIMIT 1');
-    $st->execute([$username]);
-    $user = $st->fetch();
-    if (!$user || !password_verify($password, (string)$user['password_hash'])) {
-        send_json(['ok' => false, 'error' => 'ユーザー名またはパスワードが正しくありません。'], 401);
-    }
-
-    auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE user_id = ?')->execute([$user['id']]);
-    auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE expires_at < NOW()')->execute();
-    $token = bin2hex(random_bytes(32));
-    $expires = date('Y-m-d H:i:s', time() + 720 * 3600);
-    auth_db()->prepare('INSERT INTO sakulabo_sessions (token, user_id, expires_at) VALUES (?,?,?)')
-        ->execute([$token, $user['id'], $expires]);
-    set_auth_cookie($token);
-    send_json(['ok' => true, 'data' => [
-        'token' => $token,
-        'user' => [
-            'id' => (int)$user['id'],
-            'username' => (string)$user['username'],
-            'display_name' => (string)$user['display_name'],
-        ],
-    ]]);
-}
-
-function auth_logout(): never {
-    $token = auth_token();
-    if ($token) auth_db()->prepare('DELETE FROM sakulabo_sessions WHERE token = ?')->execute([$token]);
-    clear_auth_cookie();
-    send_json(['ok' => true, 'data' => null]);
-}
-
-function current_auth_user(): ?array {
-    $token = auth_token();
-    if (!$token) return null;
-    $st = auth_db()->prepare(
-        'SELECT u.id, u.username, u.display_name FROM sakulabo_users u
-         JOIN sakulabo_sessions s ON s.user_id = u.id
-         WHERE s.token = ? AND s.expires_at > NOW() LIMIT 1'
-    );
-    $st->execute([$token]);
-    return $st->fetch() ?: null;
-}
-
-function require_admin_user(): array {
-    $user = current_auth_user();
-    if (!$user) send_json(['ok' => false, 'error' => 'login required'], 401);
-    if ((int)$user['id'] !== ADMIN_USER_ID) send_json(['ok' => false, 'error' => 'admin only'], 403);
-    return $user;
-}
-
-function sort_access_me(string $sortAccessFile): never {
-    $user = current_auth_user();
-    if (!$user) send_json(['ok' => true, 'data' => ['user' => null, 'allowed' => false]]);
-    send_json(['ok' => true, 'data' => [
-        'user' => $user,
-        'allowed' => is_sort_allowed($user, $sortAccessFile),
-    ]]);
-}
-
-function sort_access_list(string $sortAccessFile): never {
-    require_admin_user();
-    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
-}
-
-function sort_access_mode(string $sortAccessFile): never {
-    require_admin_user();
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
-    $mode = ((string)($payload['mode'] ?? 'limited') === 'all') ? 'all' : 'limited';
-    mutate_json_locked($sortAccessFile, static function (array $data) use ($mode): array {
-        $access = normalize_sort_access($data);
-        $access['mode'] = $mode;
-        return $access;
-    });
-    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
-}
-
-function fetch_auth_user_by_id(int $userId): ?array {
-    $st = auth_db()->prepare('SELECT id, username, display_name FROM sakulabo_users WHERE id = ? LIMIT 1');
-    $st->execute([$userId]);
-    $user = $st->fetch();
-    return $user ?: null;
-}
-
-function sort_access_save(string $sortAccessFile): never {
-    require_admin_user();
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
-    $userId = (int)($payload['user_id'] ?? 0);
-    $status = ((string)($payload['status'] ?? 'active') === 'paused') ? 'paused' : 'active';
-    if ($userId <= 0) send_json(['ok' => false, 'error' => 'Buddies profile IDを入力してください。'], 400);
-
-    $profile = fetch_auth_user_by_id($userId);
-    if (!$profile) send_json(['ok' => false, 'error' => '指定したBuddies profile IDのユーザーが見つかりません。'], 404);
-
-    $now = gmdate('c');
-    mutate_json_locked($sortAccessFile, static function (array $data) use ($profile, $status, $now): array {
-        $access = normalize_sort_access($data);
-        $id = (string)(int)$profile['id'];
-        $created = $access['users'][$id]['created_at'] ?? $now;
-        $access['users'][$id] = [
-            'user_id' => (int)$profile['id'],
-            'username' => (string)$profile['username'],
-            'display_name' => (string)$profile['display_name'],
-            'status' => $status,
-            'created_at' => $created,
-            'updated_at' => $now,
-        ];
-        return $access;
-    });
-    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
-}
-
-function sort_access_delete(string $sortAccessFile): never {
-    require_admin_user();
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
-    $userId = (int)($payload['user_id'] ?? 0);
-    if ($userId <= 0) send_json(['ok' => false, 'error' => 'Buddies profile IDを指定してください。'], 400);
-
-    mutate_json_locked($sortAccessFile, static function (array $data) use ($userId): array {
-        $access = normalize_sort_access($data);
-        unset($access['users'][(string)$userId]);
-        return $access;
-    });
-    send_json(['ok' => true, 'data' => sort_access_state($sortAccessFile)]);
-}
-
-function image_access_me(string $imageAccessFile): never {
-    $user = current_auth_user();
-    if (!$user) send_json(['ok' => true, 'data' => ['user' => null, 'allowed' => false]]);
-    send_json(['ok' => true, 'data' => [
-        'user' => $user,
-        'allowed' => (int)$user['id'] === ADMIN_USER_ID || is_sort_allowed($user, $imageAccessFile),
-    ]]);
-}
-
-function image_access_list(string $imageAccessFile): never {
-    sort_access_list($imageAccessFile);
-}
-
-function image_access_mode(string $imageAccessFile): never {
-    sort_access_mode($imageAccessFile);
-}
-
-function image_access_save(string $imageAccessFile): never {
-    sort_access_save($imageAccessFile);
-}
-
-function image_access_delete(string $imageAccessFile): never {
-    sort_access_delete($imageAccessFile);
-}
-
-function enforce_save_auth(array $payload): void {
-    $user = current_auth_user();
-    if (!$user) send_json(['error' => 'login required'], 401);
-    $source = trim((string)($payload['source'] ?? ''));
-    global $sortAccessFile, $imageAccessFile;
-    if ((int)$user['id'] === ADMIN_USER_ID) return;
-    if ($source === 'sort') {
-        if (is_sort_allowed($user, $sortAccessFile)) return;
-        send_json(['error' => 'sort access denied'], 403);
-    }
-    if ($source === 'image') {
-        if (is_sort_allowed($user, $imageAccessFile)) return;
-        send_json(['error' => 'image access denied'], 403);
-    }
-    send_json(['error' => 'admin only'], 403);
-}
-
-function delete_descriptors(string $descriptorFile, string $statsFile, string $uploadDir): never {
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['error' => 'invalid json'], 400);
-    $ids = $payload['ids'] ?? [];
-    if (!is_array($ids) || !$ids) send_json(['error' => 'ids are required'], 400);
-    $ids = array_values(array_filter(array_map('strval', $ids)));
-    $idSet = array_fill_keys($ids, true);
-
+function reset_member_descriptors(string $descriptorFile, string $statsFile, string $uploadDir): never {
+    require_admin();
+    $member = trim((string)(request_json()['member'] ?? ''));
+    if ($member === '') send_json(['ok' => false, 'error' => 'member is required'], 400);
     $deleted = 0;
     mutate_json_locked(
         $descriptorFile,
-        static function (array $data) use ($idSet, &$deleted): array {
-            foreach ($data as $member => $rows) {
-                if (!is_array($rows)) continue;
-                $nextRows = [];
-                foreach ($rows as $row) {
-                    $id = is_array($row) ? (string)($row['id'] ?? '') : '';
-                    if ($id !== '' && isset($idSet[$id])) {
-                        $deleted++;
-                        continue;
-                    }
-                    $nextRows[] = $row;
-                }
-                if ($nextRows) $data[$member] = array_values($nextRows);
-                else unset($data[$member]);
-            }
+        static function (array $data) use ($member, &$deleted): array {
+            $deleted = is_array($data[$member] ?? null) ? count($data[$member]) : 0;
+            unset($data[$member]);
             return $data;
         },
         static function (array $data) use ($statsFile): void {
@@ -518,70 +542,94 @@ function delete_descriptors(string $descriptorFile, string $statsFile, string $u
     send_json(['ok' => true, 'deleted' => $deleted]);
 }
 
-function reset_member_descriptors(string $descriptorFile, string $statsFile, string $uploadDir): never {
-    require_admin_user();
-    $payload = json_decode(file_get_contents('php://input') ?: '{}', true);
-    if (!is_array($payload)) send_json(['ok' => false, 'error' => 'invalid json'], 400);
-    $member = trim((string)($payload['member'] ?? ''));
-    if ($member === '') send_json(['ok' => false, 'error' => 'member is required'], 400);
-
-    $deleted = 0;
-    mutate_json_locked(
-        $descriptorFile,
-        static function (array $data) use ($member, &$deleted): array {
-            $rows = $data[$member] ?? [];
-            $deleted = is_array($rows) ? count($rows) : 0;
-            unset($data[$member]);
-            return $data;
-        },
-        static function (array $data) use ($statsFile): void {
-            write_json_locked($statsFile, build_stats_from_data($data));
-        }
-    );
-    cleanup_uploads($uploadDir);
-    send_json(['ok' => true, 'member' => $member, 'deleted' => $deleted]);
+function admin_upload_source_images(string $sourceDir): never {
+    require_admin();
+    if (empty($_FILES['images'])) send_json(['ok' => false, 'error' => 'images are required'], 400);
+    $files = normalize_upload_files($_FILES['images']);
+    $saved = [];
+    foreach ($files as $file) {
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) continue;
+        $info = @getimagesize($file['tmp_name']);
+        if (!$info || empty($info['mime']) || !str_starts_with($info['mime'], 'image/')) continue;
+        $ext = match ($info['mime']) {
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            default => 'jpg',
+        };
+        $name = gmdate('YmdHis') . '-' . bin2hex(random_bytes(5)) . '.' . $ext;
+        if (move_uploaded_file($file['tmp_name'], $sourceDir . '/' . $name)) $saved[] = $name;
+    }
+    send_json(['ok' => true, 'saved' => $saved, 'data' => list_source_images($sourceDir)]);
 }
 
-function cleanup_uploads(string $uploadDir): void {
-    if (!is_dir($uploadDir)) return;
-    foreach (glob($uploadDir . '/*') ?: [] as $path) {
-        if (is_file($path) && basename($path) !== '.gitkeep') @unlink($path);
+function normalize_upload_files(array $field): array {
+    if (!is_array($field['name'])) return [$field];
+    $files = [];
+    foreach ($field['name'] as $i => $name) {
+        $files[] = [
+            'name' => $name,
+            'type' => $field['type'][$i] ?? '',
+            'tmp_name' => $field['tmp_name'][$i] ?? '',
+            'error' => $field['error'][$i] ?? UPLOAD_ERR_NO_FILE,
+            'size' => $field['size'][$i] ?? 0,
+        ];
     }
+    return $files;
 }
 
-function proxy_image(): never {
-    $url = trim((string)($_GET['url'] ?? ''));
-    if ($url === '' || !filter_var($url, FILTER_VALIDATE_URL)) {
-        http_response_code(400);
-        exit('invalid url');
-    }
-    $parts = parse_url($url);
-    $scheme = strtolower((string)($parts['scheme'] ?? ''));
-    if (!in_array($scheme, ['https', 'http'], true)) {
-        http_response_code(400);
-        exit('invalid scheme');
-    }
+function admin_delete_source_image(string $sourceDir): never {
+    require_admin();
+    $id = basename((string)(request_json()['id'] ?? ''));
+    if ($id !== '' && is_file($sourceDir . '/' . $id)) unlink($sourceDir . '/' . $id);
+    send_json(['ok' => true, 'data' => list_source_images($sourceDir)]);
+}
 
-    $ctx = stream_context_create([
-        'http' => [
-            'timeout' => 10,
-            'follow_location' => 1,
-            'max_redirects' => 3,
-            'header' => "User-Agent: ASTRA/1.0\r\n",
-        ],
-    ]);
-    $bytes = @file_get_contents($url, false, $ctx, 0, 8 * 1024 * 1024 + 1);
-    if ($bytes === false || strlen($bytes) === 0 || strlen($bytes) > 8 * 1024 * 1024) {
-        http_response_code(502);
-        exit('failed to fetch image');
+function source_images(string $accessFile, string $sessionsFile, string $sourceDir): never {
+    if (!is_training_allowed('from_image', $accessFile)) send_json(['ok' => false, 'error' => 'access denied'], 403);
+    send_json(['ok' => true, 'data' => list_source_images($sourceDir)]);
+}
+
+function source_image(string $accessFile, string $sessionsFile, string $sourceDir): never {
+    if (!is_training_allowed('from_image', $accessFile)) {
+        http_response_code(403);
+        exit('access denied');
     }
-    $info = @getimagesizefromstring($bytes);
-    if (!$info || empty($info['mime']) || !str_starts_with($info['mime'], 'image/')) {
+    $id = basename((string)($_GET['id'] ?? ''));
+    $path = $sourceDir . '/' . $id;
+    if ($id === '' || !is_file($path)) {
+        http_response_code(404);
+        exit('not found');
+    }
+    $info = @getimagesize($path);
+    if (!$info || empty($info['mime'])) {
         http_response_code(415);
         exit('not image');
     }
     header('Content-Type: ' . $info['mime']);
-    header('Cache-Control: private, max-age=3600');
-    echo $bytes;
+    header('Cache-Control: private, max-age=300');
+    readfile($path);
     exit;
+}
+
+function list_source_images(string $sourceDir): array {
+    $rows = [];
+    foreach (glob($sourceDir . '/*') ?: [] as $path) {
+        if (!is_file($path) || basename($path) === '.gitkeep') continue;
+        $info = @getimagesize($path);
+        if (!$info || empty($info['mime']) || !str_starts_with($info['mime'], 'image/')) continue;
+        $rows[] = [
+            'id' => basename($path),
+            'name' => basename($path),
+            'size' => filesize($path) ?: 0,
+            'updated_at' => gmdate('c', filemtime($path) ?: time()),
+        ];
+    }
+    usort($rows, static fn($a, $b) => strcmp($a['name'], $b['name']));
+    return $rows;
+}
+
+function cleanup_uploads(string $uploadDir): void {
+    foreach (glob($uploadDir . '/*') ?: [] as $path) {
+        if (is_file($path) && basename($path) !== '.gitkeep') @unlink($path);
+    }
 }

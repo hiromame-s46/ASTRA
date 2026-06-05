@@ -3,6 +3,7 @@
 # Local environment and server configuration
 .env
 .env.*
+!.env.example
 *.local
 *.local.*
 config.php
@@ -19,11 +20,12 @@ id_ed25519
 # Runtime uploads
 uploads/train/*
 !uploads/train/.gitkeep
+uploads/source/*
+!uploads/source/.gitkeep
+!uploads/source/.htaccess
 
 # Runtime generated data
-data/descriptors.json
-data/stats.json
-data/sort_access.json
+data/*.json
 !data/*.example.json
 
 # Logs and temporary files

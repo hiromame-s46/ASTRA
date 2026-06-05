@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
-<title>画像学習 - ASTRA</title>
+<title>フォルダ画像学習 - ASTRA</title>
 <link rel="apple-touch-icon" sizes="180x180" href="./icon/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="./icon/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="./icon/favicon-16x16.png">
@@ -17,31 +17,35 @@
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@300;400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./style.css">
 </head>
-<body data-train-mode="upload">
+<body data-training-page="from_image">
 <header class="astra-header">
   <a class="astra-brand" href="./" aria-label="ASTRA home">
     <img src="./assets/astra-header-icon.png" alt="ASTRA">
     <span><strong>ASTRA</strong></span>
   </a>
 </header>
-<main class="wrap sort-wrap">
+<main class="wrap">
   <section class="hero">
-    <p class="eyebrow"><i class="fas fa-image"></i> Train Image</p>
-    <h1>画像から学習データを登録</h1>
-    <p class="lead">手元の画像から顔を検出し、顔ごとにメンバーを指定してASTRAの学習データに登録します。画像ファイル自体は保存しません。</p>
+    <p class="eyebrow"><i class="fas fa-folder-open"></i> Train Folder</p>
+    <h1>フォルダ画像から学習</h1>
+    <p class="lead">管理者が追加した画像を順に確認し、顔ごとに人物名を指定して学習データに登録します。</p>
+    <div class="top-links">
+      <a class="button soft" href="./"><i class="fas fa-wand-magic-sparkles"></i>判定</a>
+      <a class="button soft" href="./train-upload-image.html"><i class="fas fa-upload"></i>アップロード学習</a>
+      <a class="button soft" href="./admin.html"><i class="fas fa-shield-halved"></i>管理</a>
+    </div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="access-panel"></section>
+
+  <section class="panel" id="queue-panel">
     <label class="toggle-row">
       <input type="checkbox" id="efficient-mode-toggle" checked>
       <span>効率学習モード</span>
     </label>
     <p class="status" id="status">モデルを読み込み中...</p>
-    <label class="file-drop">
-      <input type="file" id="upload-input" accept="image/*" multiple>
-      <span><i class="fas fa-images"></i> 学習画像を選択</span>
-    </label>
-    <div class="blog-card" id="blog-info"></div>
+    <button class="button primary" type="button" onclick="reloadSourceQueue()"><i class="fas fa-rotate"></i>画像リストを読み込む</button>
+    <div class="image-card" id="image-info"></div>
   </section>
 
   <section class="panel hidden" id="image-panel">
@@ -55,13 +59,13 @@
     </div>
   </section>
 </main>
-<div class="blog-bottom-bar sort-bottom-bar">
+<div class="train-bottom-bar">
   <button class="button" id="undo-bottom-btn" type="button" onclick="goBackImage()" disabled>戻る</button>
   <button class="button primary" id="save-bottom-btn" type="button" onclick="handlePrimaryAction()" disabled>登録</button>
   <button class="button" type="button" onclick="skipImage()">次へ</button>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 <script src="./matcher.js"></script>
-<script src="./train-image.js?v=20260604-image-access-check"></script>
+<script src="./training.js?v=20260605-oss-training"></script>
 </body>
 </html>

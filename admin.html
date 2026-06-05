@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<title>Admin - ASTRA</title>
+<link rel="apple-touch-icon" sizes="180x180" href="./icon/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./icon/favicon-16x16.png">
+<link rel="shortcut icon" href="./icon/favicon.ico">
+<link rel="manifest" href="./icon/site.webmanifest">
+<meta name="theme-color" content="#ffffff">
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="astra-header">
+  <a class="astra-brand" href="./" aria-label="ASTRA home">
+    <img src="./assets/astra-header-icon.png" alt="ASTRA">
+    <span><strong>ASTRA</strong></span>
+  </a>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <p class="eyebrow"><i class="fas fa-shield-halved"></i> Admin</p>
+    <h1>初期設定と管理</h1>
+    <p class="lead">コミュニティのメンバー、学習ページ権限、協力者ユーザー、管理者が配布する学習画像を設定します。</p>
+    <div class="top-links">
+      <a class="button soft" href="./"><i class="fas fa-wand-magic-sparkles"></i>判定</a>
+      <a class="button soft" href="./train-upload-image.html"><i class="fas fa-upload"></i>アップロード学習</a>
+      <a class="button soft" href="./train-from-image.html"><i class="fas fa-folder-open"></i>フォルダ画像学習</a>
+      <button class="button soft hidden" id="logout-btn" type="button" onclick="logoutAdmin()"><i class="fas fa-right-from-bracket"></i>ログアウト</button>
+    </div>
+  </section>
+
+  <section class="panel" id="login-panel">
+    <p class="label">Admin Login</p>
+    <div class="grid two">
+      <input class="field" id="admin-username" autocomplete="username" placeholder="管理者ユーザー名">
+      <input class="field" id="admin-password" type="password" autocomplete="current-password" placeholder="管理者パスワード">
+    </div>
+    <button class="button primary" type="button" onclick="loginAdmin()">ログイン</button>
+    <p class="status" id="login-status">`.env` の管理者設定でログインします。</p>
+  </section>
+
+  <div id="admin-app" class="hidden">
+    <section class="grid two">
+      <section class="panel">
+        <p class="label">Members</p>
+        <textarea class="field admin-textarea" id="members-text" placeholder="1行に1人ずつ入力"></textarea>
+        <button class="button primary" type="button" onclick="saveMembers()">メンバー設定を保存</button>
+        <p class="status" id="members-status">人物名は判定・学習の選択肢に使われます。</p>
+      </section>
+
+      <section class="panel">
+        <p class="label">Training Access</p>
+        <label class="label" for="upload-mode">アップロード学習</label>
+        <select class="select" id="upload-mode">
+          <option value="none">ログインなし</option>
+          <option value="shared">共通パスワード</option>
+          <option value="users">協力者ユーザー</option>
+        </select>
+        <label class="label admin-spaced" for="from-image-mode">フォルダ画像学習</label>
+        <select class="select" id="from-image-mode">
+          <option value="none">ログインなし</option>
+          <option value="shared">共通パスワード</option>
+          <option value="users">協力者ユーザー</option>
+        </select>
+        <button class="button primary" type="button" onclick="saveAccessModes()">権限モードを保存</button>
+        <p class="status" id="access-status"></p>
+      </section>
+    </section>
+
+    <section class="grid two">
+      <section class="panel">
+        <p class="label">Shared Password</p>
+        <input class="field" id="shared-password" type="password" autocomplete="new-password" placeholder="共通パスワード（8文字以上）">
+        <button class="button primary" type="button" onclick="saveSharedPassword()">共通パスワードを設定</button>
+        <p class="status" id="shared-status"></p>
+      </section>
+
+      <section class="panel">
+        <p class="label">Contributor User</p>
+        <input class="field" id="user-id" type="hidden">
+        <div class="grid two">
+          <input class="field" id="user-username" placeholder="ユーザー名">
+          <input class="field" id="user-display-name" placeholder="表示名">
+        </div>
+        <input class="field" id="user-password" type="password" autocomplete="new-password" placeholder="パスワード（新規時必須）">
+        <label class="toggle-row"><input type="checkbox" id="perm-upload" checked><span>アップロード学習を許可</span></label>
+        <label class="toggle-row"><input type="checkbox" id="perm-from-image" checked><span>フォルダ画像学習を許可</span></label>
+        <button class="button primary" type="button" onclick="saveUser()">協力者ユーザーを保存</button>
+        <p class="status" id="user-status"></p>
+      </section>
+    </section>
+
+    <section class="panel">
+      <p class="label">Contributor Users</p>
+      <div class="access-user-list" id="users-list"></div>
+    </section>
+
+    <section class="panel">
+      <p class="label">Source Images</p>
+      <label class="file-drop">
+        <input type="file" id="source-images-input" accept="image/*" multiple>
+        <span><i class="fas fa-images"></i> フォルダ学習用の画像を追加</span>
+      </label>
+      <p class="status" id="source-status"></p>
+      <div class="access-user-list" id="source-list"></div>
+    </section>
+
+    <section class="panel">
+      <p class="label">Training Stats</p>
+      <div class="stats-grid" id="stats"></div>
+    </section>
+  </div>
+</main>
+<script src="./admin.js?v=20260605-oss-admin"></script>
+</body>
+</html>
